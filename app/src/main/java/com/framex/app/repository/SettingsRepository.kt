@@ -114,6 +114,43 @@ class SettingsRepository @Inject constructor(
         _overlayY.value = y
     }
 
+    // ---- Gaming Mode --------------------------------------------------------
+
+    /** Persisted whitelist — package names the user has opted out of killing. */
+    private val _gamingModeWhitelist = MutableStateFlow(
+        prefs.getStringSet(KEY_GAMING_WHITELIST, emptySet()) ?: emptySet()
+    )
+    val gamingModeWhitelist: StateFlow<Set<String>> = _gamingModeWhitelist.asStateFlow()
+
+    fun setGamingModeWhitelist(pkgs: Set<String>) {
+        prefs.edit().putStringSet(KEY_GAMING_WHITELIST, pkgs).apply()
+        _gamingModeWhitelist.value = pkgs
+    }
+
+    fun toggleGamingWhitelistApp(packageName: String) {
+        val current = _gamingModeWhitelist.value.toMutableSet()
+        if (current.contains(packageName)) current.remove(packageName) else current.add(packageName)
+        setGamingModeWhitelist(current)
+    }
+
+    /** Whether Gaming Mode was active when the app was last killed. Used for recovery. */
+    fun setGamingModeActive(active: Boolean) {
+        prefs.edit().putBoolean(KEY_GAMING_MODE_ACTIVE, active).apply()
+    }
+
+    fun isGamingModeActive(): Boolean = prefs.getBoolean(KEY_GAMING_MODE_ACTIVE, false)
+
+    /**
+     * The set of packages whose AppOps we changed during the last Gaming Mode
+     * session.  Stored so disableGamingMode() only resets what it actually changed.
+     */
+    fun setGamingAffectedPackages(pkgs: Set<String>) {
+        prefs.edit().putStringSet(KEY_GAMING_AFFECTED_PKGS, pkgs).apply()
+    }
+
+    fun getGamingAffectedPackages(): Set<String> =
+        prefs.getStringSet(KEY_GAMING_AFFECTED_PKGS, emptySet()) ?: emptySet()
+
     companion object {
         private const val KEY_OVERLAY_MODE = "overlay_mode"
         private const val KEY_ENABLED_MODULES = "enabled_modules"
@@ -127,5 +164,8 @@ class SettingsRepository @Inject constructor(
         private const val KEY_IS_ONBOARDING_COMPLETED = "is_onboarding_completed"
         private const val KEY_OVERLAY_X = "overlay_x"
         private const val KEY_OVERLAY_Y = "overlay_y"
+        private const val KEY_GAMING_WHITELIST = "gaming_mode_whitelist"
+        private const val KEY_GAMING_MODE_ACTIVE = "gaming_mode_active"
+        private const val KEY_GAMING_AFFECTED_PKGS = "gaming_affected_pkgs"
     }
 }

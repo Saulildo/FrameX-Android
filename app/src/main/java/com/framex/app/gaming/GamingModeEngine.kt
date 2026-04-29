@@ -1,0 +1,421 @@
+package com.framex.app.gaming
+
+import android.app.NotificationManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import com.framex.app.repository.SettingsRepository
+import com.framex.app.shizuku.ShizukuManager
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
+
+// ---------------------------------------------------------------------------
+// State model
+// ---------------------------------------------------------------------------
+
+sealed class GamingModeState {
+    object Idle : GamingModeState()
+    data class Enabling(val progress: Float = 0f, val statusText: String = "Preparing…") : GamingModeState()
+    object Active : GamingModeState()
+    object Disabling : GamingModeState()
+    data class Error(val message: String) : GamingModeState()
+}
+
+data class AppInfo(
+    val packageName: String,
+    val label: String
+)
+
+// ---------------------------------------------------------------------------
+// Engine
+// ---------------------------------------------------------------------------
+
+@Singleton
+class GamingModeEngine @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val shizukuManager: ShizukuManager,
+    private val settingsRepository: SettingsRepository
+) {
+
+    // ---- Public state -------------------------------------------------------
+
+    private val _state = MutableStateFlow<GamingModeState>(GamingModeState.Idle)
+    val state: StateFlow<GamingModeState> = _state.asStateFlow()
+
+    // Companion-level flag so GamingNotificationListener can read it without DI.
+    companion object {
+        private val _isActive = MutableStateFlow(false)
+        val isActive: StateFlow<Boolean> = _isActive.asStateFlow()
+
+        internal const val RECOVERY_NOTIFICATION_ID = 3
+    }
+
+    // ---- Package hit-lists (extracted from Vivo T3 Ultra dump) -----------
+
+    val SAFE_TO_SUSPEND = listOf(
+        // App Stores & Updaters
+        "com.vivo.appstore",
+        "com.bbk.updater",
+        "com.vivo.website",
+        "com.vivo.cardstore",
+
+        // UI Bloat & Background Polling
+        "com.vivo.assistant",
+        "com.vivo.hiboard",            // Jovi / Minus-one screen
+        "com.vivo.globalsearch",
+        "com.vivo.magazine",           // Lockscreen magazine
+        "com.bbk.theme",               // Theme store background sync
+        "com.vivo.theme.effect",
+        "com.vivo.video.floating",
+
+        // Widgets & Syncers
+        "com.vivo.weather",
+        "com.vivo.weather.provider",
+        "com.vivo.healthwidget",
+        "com.vivo.stepcount",
+        "com.vivo.exhealth",
+        "com.bbk.cloud",               // Vivo Cloud sync
+
+        // Secondary Vivo Services
+        "com.vivo.imanager",           // Vivo cleaner (FrameX replaces it)
+        "com.vivo.safecenter",         // Vivo security
+        "com.vivo.xspace",
+        "com.vivo.doubleinstance",     // App clone daemon
+        "com.vivo.musicwidgetmix",
+        "com.vivo.smartshot",
+        "com.vivo.nps"                 // Net Promoter Score / Analytics
+    )
+
+    val GOOGLE_SAFE_TO_SUSPEND = listOf(
+        // Google user-facing apps — safe to freeze during gaming
+        "com.google.android.youtube",
+        "com.google.android.apps.photos",
+        "com.google.android.apps.maps",
+        "com.google.android.gm",                   // Gmail
+        "com.google.android.apps.messaging",        // Google Messages
+        "com.google.android.calendar",
+        "com.google.android.googlequicksearchbox",  // Google Search / Assistant
+        "com.google.android.apps.bard",             // Gemini
+        "com.google.android.apps.nbu.files",        // Files by Google
+        "com.google.android.apps.wellbeing",        // Digital Wellbeing
+        "com.google.android.projection.gearhead",   // Android Auto
+        "com.google.android.apps.authenticator2",   // Authenticator
+        "com.google.android.apps.restore",          // Google Restore
+        "com.android.chrome"                        // Chrome browser
+    )
+
+    val SYSTEM_CRITICAL = listOf(
+        // Core Daemons — suspending these causes soft-reboot on OriginOS
+        "com.vivo.pem",                // Power Event Manager — restarts force-stopped apps
+        "com.vivo.abe",                // App Behavior Engine
+        "com.vivo.daemonService",      // Hardware daemon
+        "com.vivo.sps",                // System Power Service
+        "com.vivo.pie",                // Framework extension
+
+        // Hardware & UI Modules
+        "com.vivo.fingerprintui",
+        "com.vivo.fingerprint",
+        "com.vivo.fingerprintvit",
+        "com.vivo.faceui",
+        "com.vivo.faceunlock",
+        "com.vivo.systemuiplugin",
+        "com.vivo.networkstate",
+        "com.vivo.connbase",
+        "com.android.systemui",
+        "com.android.phone",
+        "com.mediatek.ims"             // VoLTE — kills calls if suspended
+    )
+
+    val GAMING_DAEMONS = listOf(
+        "com.vivo.gamecube",
+        "com.vivo.gamewatch",
+        "com.vivo.game",
+        "com.iqoo.powersaving",        // Prevents thermal throttling
+        "com.microsoft.deviceintegrationservice"  // ThermalInfoService bridge
+    )
+
+    // Always protected — losing Shizuku = losing the ADB bridge.
+    private val HARD_WHITELIST = setOf(
+        "moe.shizuku.privileged.api",  // Shizuku itself
+        context.packageName,           // FrameX itself
+        "com.adguard.android",
+        "com.adguard.vpn"
+    )
+
+    // ---- Public API ---------------------------------------------------------
+
+    /**
+     * Enumerate all installed non-system user apps that are candidates for
+     * the AppOps / force-stop treatment.  Returns them sorted by label.
+     */
+    fun getInstalledUserApps(): List<AppInfo> {
+        val pm = context.packageManager
+        return pm.getInstalledApplications(PackageManager.GET_META_DATA)
+            .filter { ai ->
+                // Keep only user-installed apps (no FLAG_SYSTEM)
+                (ai.flags and ApplicationInfo.FLAG_SYSTEM) == 0 &&
+                    ai.packageName !in SYSTEM_CRITICAL &&
+                    ai.packageName !in GAMING_DAEMONS &&
+                    ai.packageName !in HARD_WHITELIST &&
+                    ai.packageName !in GOOGLE_SAFE_TO_SUSPEND
+            }
+            .map { ai ->
+                AppInfo(
+                    packageName = ai.packageName,
+                    label = pm.getApplicationLabel(ai).toString()
+                )
+            }
+            .sortedBy { it.label.lowercase() }
+    }
+
+    /**
+     * Returns the Google apps from GOOGLE_SAFE_TO_SUSPEND that are actually
+     * installed on this device, so the whitelist UI can show them as toggleable.
+     */
+    fun getGoogleAppsForWhitelist(): List<AppInfo> {
+        val pm = context.packageManager
+        return GOOGLE_SAFE_TO_SUSPEND.mapNotNull { pkg ->
+            try {
+                val ai = pm.getApplicationInfo(pkg, 0)
+                AppInfo(
+                    packageName = ai.packageName,
+                    label = pm.getApplicationLabel(ai).toString()
+                )
+            } catch (_: PackageManager.NameNotFoundException) {
+                null  // Not installed on this device
+            }
+        }.sortedBy { it.label.lowercase() }
+    }
+
+    /**
+     * Full Gaming Mode activation sequence.
+     *
+     * 1. pm suspend --user 0 on SAFE_TO_SUSPEND
+     * 2. AppOps ignore + am force-stop on non-whitelisted user apps
+     * 3. am kill-all
+     * 4. Enable DND (if policy access is granted)
+     */
+    suspend fun enableGamingMode(userWhitelist: Set<String>) {
+        if (!shizukuManager.isShizukuAvailable.value || !shizukuManager.hasPermission.value) {
+            _state.value = GamingModeState.Error("Shizuku not available or permission not granted")
+            return
+        }
+
+        _state.value = GamingModeState.Enabling(0f, "Initializing…")
+        
+        // OriginOS 6 "Final Boss" Fix: Force re-bind the Notification Listener.
+        // On Vivo/Oppo, the listener can fall into a 'coma' if unused. 
+        // Disabling and re-enabling it right before use wakes it up 100% of the time.
+        try {
+            val component = ComponentName(context, GamingNotificationListener::class.java)
+            context.packageManager.setComponentEnabledSetting(
+                component, 
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED, 
+                PackageManager.DONT_KILL_APP
+            )
+            // Small delay to allow the system to process the unbind before re-binding
+            kotlinx.coroutines.delay(100)
+            context.packageManager.setComponentEnabledSetting(
+                component, 
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED, 
+                PackageManager.DONT_KILL_APP
+            )
+        } catch (e: Exception) { /* Ignore if it fails, non-critical */ }
+
+        try {
+            // ----------------------------------------------------------------
+            // Phase 1 — OEM bloatware (using smart fallback)
+            // ----------------------------------------------------------------
+            val allSystemTargets = SAFE_TO_SUSPEND + GOOGLE_SAFE_TO_SUSPEND.filter { it !in userWhitelist }
+            val totalPhases = allSystemTargets.size + 10
+            SAFE_TO_SUSPEND.forEachIndexed { idx, pkg ->
+                _state.value = GamingModeState.Enabling(
+                    progress = idx.toFloat() / totalPhases,
+                    statusText = "Silencing ${pkg.substringAfterLast('.')}"
+                )
+                suspendOrRestrict(pkg, pkg.substringAfterLast('.'))
+            }
+
+            // ----------------------------------------------------------------
+            // Phase 1.5 — Google apps (using smart fallback, respects whitelist)
+            // ----------------------------------------------------------------
+            val googleTargets = GOOGLE_SAFE_TO_SUSPEND.filter { it !in userWhitelist }
+            googleTargets.forEachIndexed { idx, pkg ->
+                _state.value = GamingModeState.Enabling(
+                    progress = (SAFE_TO_SUSPEND.size + idx).toFloat() / totalPhases,
+                    statusText = "Suspending ${pkg.substringAfterLast('.')}"
+                )
+                suspendOrRestrict(pkg, pkg.substringAfterLast('.'))
+            }
+
+            // ----------------------------------------------------------------
+            // Phase 2 — User apps (using smart fallback)
+            // ----------------------------------------------------------------
+            val affectedPkgs = mutableSetOf<String>()
+            // Track Google apps we actually processed so we can restore them later
+            affectedPkgs.addAll(googleTargets)
+
+            val userApps = withContext(Dispatchers.IO) { getInstalledUserApps() }
+                .filter { it.packageName !in userWhitelist }
+
+            userApps.forEachIndexed { idx, app ->
+                _state.value = GamingModeState.Enabling(
+                    progress = (allSystemTargets.size + idx).toFloat() / (allSystemTargets.size + userApps.size + 2),
+                    statusText = "Suspending ${app.label}"
+                )
+                suspendOrRestrict(app.packageName, app.label)
+                affectedPkgs.add(app.packageName)
+            }
+
+            // Persist the affected list so disableGamingMode restores only what we changed.
+            settingsRepository.setGamingAffectedPackages(affectedPkgs)
+
+            // ----------------------------------------------------------------
+            // Phase 3 — Kill cached background processes
+            // ----------------------------------------------------------------
+            _state.value = GamingModeState.Enabling(0.96f, "Purging background cache…")
+            shizukuManager.executeCommand("am kill-all")
+
+            // ----------------------------------------------------------------
+            // Phase 4 — Enable DND via NotificationManager policy
+            // ----------------------------------------------------------------
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (nm.isNotificationPolicyAccessGranted) {
+                nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
+            }
+
+            // ----------------------------------------------------------------
+            // Done
+            // ----------------------------------------------------------------
+            settingsRepository.setGamingModeActive(true)
+            _isActive.value = true
+            _state.value = GamingModeState.Active
+
+        } catch (e: Exception) {
+            _state.value = GamingModeState.Error(e.message ?: "Unexpected error during activation")
+            settingsRepository.setGamingModeActive(false)
+            _isActive.value = false
+        }
+    }
+
+    /**
+     * Attempts to fully suspend an app (gray icon). If the system blocks it
+     * (SecurityException on Android 16 system apps), it falls back to
+     * aggressive process killing and AppOps background restrictions.
+     */
+    private suspend fun suspendOrRestrict(packageName: String, label: String) {
+        // Step 1: Try pm suspend (the most effective state)
+        val suspendResult = shizukuManager.executeCommand("pm suspend --user 0 $packageName")
+        
+        // Step 2: Check if it was blocked by security policies
+        val isBlocked = suspendResult.contains("SecurityException", ignoreCase = true) ||
+                       suspendResult.contains("Error", ignoreCase = true) ||
+                       suspendResult.contains("restricted", ignoreCase = true)
+
+        if (isBlocked) {
+            // Step 3: Fallback — Kill and neuter the app via AppOps
+            // This won't turn the icon gray but will prevent it from running.
+            shizukuManager.executeCommand("am force-stop $packageName")
+            shizukuManager.executeCommand("cmd appops set $packageName RUN_IN_BACKGROUND ignore")
+            shizukuManager.executeCommand("cmd appops set $packageName RUN_ANY_IN_BACKGROUND ignore")
+            shizukuManager.executeCommand("cmd appops set $packageName START_FOREGROUND ignore")
+        } else {
+            // Even if suspended successfully, we still apply AppOps as a backup layer
+            shizukuManager.executeCommand("cmd appops set $packageName RUN_IN_BACKGROUND ignore")
+            shizukuManager.executeCommand("cmd appops set $packageName RUN_ANY_IN_BACKGROUND ignore")
+            // Note: am force-stop is always good practice to clear existing RAM
+            shizukuManager.executeCommand("am force-stop $packageName")
+        }
+    }
+
+    /**
+     * Full Gaming Mode deactivation sequence.
+     *
+     * 1. pm unsuspend on SAFE_TO_SUSPEND
+     * 2. pm unsuspend + restore AppOps on previously-affected user packages
+     * 3. Disable DND
+     */
+    suspend fun disableGamingMode() {
+        _state.value = GamingModeState.Disabling
+
+        try {
+            // Unsuspend all OEM packages
+            SAFE_TO_SUSPEND.forEach { pkg ->
+                shizukuManager.executeCommand("pm unsuspend --user 0 $pkg")
+            }
+
+            // Unsuspend + restore AppOps for user packages we actually changed
+            val affected = settingsRepository.getGamingAffectedPackages()
+            affected.forEach { pkg ->
+                shizukuManager.executeCommand("pm unsuspend --user 0 $pkg")
+                shizukuManager.executeCommand("cmd appops set $pkg RUN_IN_BACKGROUND allow")
+                shizukuManager.executeCommand("cmd appops set $pkg RUN_ANY_IN_BACKGROUND allow")
+                shizukuManager.executeCommand("cmd appops set $pkg START_FOREGROUND allow")
+            }
+            settingsRepository.setGamingAffectedPackages(emptySet())
+
+            // Restore DND
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (nm.isNotificationPolicyAccessGranted) {
+                nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+            }
+
+        } catch (e: Exception) {
+            // Always transition to Idle even on partial failure — leaving the mode in
+            // a broken "Active" state is worse than a failed restore.
+        }
+
+        settingsRepository.setGamingModeActive(false)
+        _isActive.value = false
+        _state.value = GamingModeState.Idle
+    }
+
+    /** Called on app start-up to recover state that was active before a kill. */
+    fun recoverPersistedState() {
+        if (settingsRepository.isGamingModeActive()) {
+            if (shizukuManager.isShizukuAvailable.value && shizukuManager.hasPermission.value) {
+                // The FGS may have been killed but the device is still in the modified state.
+                // Mark as active so the UI reflects reality; the user can deactivate normally.
+                _isActive.value = true
+                _state.value = GamingModeState.Active
+            } else {
+                // OriginOS 6 "Final Boss" Fix: Reboot Dilemma.
+                // Gaming Mode was active but Shizuku is gone (e.g. after reboot).
+                // We MUST notify the user to reconnect Shizuku to restore their apps.
+                showRecoveryNotification()
+            }
+        }
+    }
+
+    private fun showRecoveryNotification() {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val tapIntent = Intent(context, com.framex.app.MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pi = android.app.PendingIntent.getActivity(
+            context, 0, tapIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = androidx.core.app.NotificationCompat.Builder(context, GamingModeService.CHANNEL_ID)
+            .setContentTitle("Gaming Mode Interrupted")
+            .setContentText("Tap to connect Shizuku and restore your apps.")
+            .setSmallIcon(com.framex.app.R.drawable.ic_notification)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .setCategory(androidx.core.app.NotificationCompat.CATEGORY_ERROR)
+            .setAutoCancel(true)
+            .setOngoing(true)
+            .setContentIntent(pi)
+            .build()
+
+        nm.notify(RECOVERY_NOTIFICATION_ID, notification)
+    }
+}

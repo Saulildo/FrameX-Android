@@ -11,7 +11,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
@@ -57,7 +57,7 @@ fun AboutScreen(
                 modifier = Modifier
                     .background(Color.White.copy(0.05f), CircleShape)
             ) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
             }
             Text(
                 text = "About & Legal",
@@ -95,7 +95,7 @@ fun AboutScreen(
             }
             Spacer(modifier = Modifier.height(16.dp))
             Text("FrameX", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color.White)
-            Text("v1.0 (Build 100)", fontSize = 14.sp, color = Color.Gray, fontWeight = FontWeight.Medium)
+            Text("v1.1 (Build 101)", fontSize = 14.sp, color = Color.Gray, fontWeight = FontWeight.Medium)
             
             Spacer(modifier = Modifier.height(24.dp))
             
@@ -156,13 +156,13 @@ fun AboutScreen(
                         title = "Privacy Policy",
                         url = "https://github.com/MaheshSharan/FrameX/blob/main/PRIVACY.md"
                     )
-                    Divider(color = Color.White.copy(0.05f))
+                    HorizontalDivider(color = Color.White.copy(0.05f))
                     LegalListItem(
                         icon = Icons.Default.Code,
                         title = "Open-source Licenses",
                         url = "https://github.com/MaheshSharan/FrameX/blob/main/LICENSES.md"
                     )
-                    Divider(color = Color.White.copy(0.05f))
+                    HorizontalDivider(color = Color.White.copy(0.05f))
                     LegalListItem(
                         icon = Icons.Default.Gavel,
                         title = "Terms of Service",

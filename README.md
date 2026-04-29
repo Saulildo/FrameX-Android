@@ -2,10 +2,13 @@
 
 > Real-time performance overlay for Android. Powered by [Shizuku](https://github.com/RikkaApps/Shizuku) — no root required.
 
+> [!IMPORTANT]
+> The **Gaming Performance Mode** engine is a specialized implementation specifically hardened and optimized for **Android 16** and **Vivo OriginOS/FuntouchOS** environments. Its package suspension and restricted-state flows are custom-tailored for peak efficiency on these devices and may not reflect universal behavior on all Android skins.
+
 [![API](https://img.shields.io/badge/API-26%2B-brightgreen.svg?style=flat)](https://developer.android.com/about/versions/oreo)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0-blue.svg?logo=kotlin)](https://kotlinlang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0-orange.svg)](https://github.com/MaheshSharan/FrameX-Android/releases/tag/v1.0.0)
+[![Version](https://img.shields.io/badge/version-1.1.0-orange.svg)](https://github.com/MaheshSharan/FrameX-Android/releases/tag/v1.1.0)
 
 ---
 
@@ -14,6 +17,8 @@
 FrameX shows a draggable, fully customisable overlay with live system stats on top of any app or game — including full-screen titles.
 
 **Available metrics:** FPS · CPU frequency · RAM usage · Battery temperature · Network speed · Ping
+
+**Performance Mode:** Optimize your device for gaming by suspending bloatware, restricting background apps, and enabling advanced Do Not Disturb.
 
 ---
 
@@ -35,6 +40,7 @@ FrameX shows a draggable, fully customisable overlay with live system stats on t
 5. **Drag** it anywhere · **Long-press** to cycle display modes without leaving the game
 6. **Metrics** — choose which stats are visible via Overlay Customization
 7. **Appearance** — change opacity, background, border, text color, text size, font
+8. **Performance** — Activate Gaming Mode to suspend OEM bloatware and restrict background noise
 
 ---
 
@@ -92,6 +98,9 @@ cd FrameX-Android
 | REQUEST_IGNORE_BATTERY_OPTIMIZATIONS | Survive aggressive OEM background-kill policies |
 | Receive boot completed | Auto-restart overlay after reboot if it was active |
 | Internet | Ping measurement to google.com only |
+| Kill background processes | Used to purge cached background apps during Gaming Mode activation |
+| Access notification policy | Required to toggle Do Not Disturb mode automatically |
+| Foreground service (Special Use) | Ensures Gaming Mode stays active on Android 14+ |
 
 ---
 

@@ -296,7 +296,7 @@ fun AppearanceScreen(
                             }
                         }
 
-                        Divider(color = Color.White.copy(0.05f), modifier = Modifier.padding(vertical = 16.dp))
+                        HorizontalDivider(color = Color.White.copy(0.05f), modifier = Modifier.padding(vertical = 16.dp))
 
                         // Border Style
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -363,7 +363,7 @@ fun AppearanceScreen(
                                 }
                             }
                         }
-                        Divider(color = Color.White.copy(0.05f))
+                        HorizontalDivider(color = Color.White.copy(0.05f))
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(20.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -421,7 +421,7 @@ fun AppearanceScreen(
                             }
                         }
                         
-                        Divider(color = Color.White.copy(0.05f), modifier = Modifier.padding(vertical = 16.dp))
+                        HorizontalDivider(color = Color.White.copy(0.05f), modifier = Modifier.padding(vertical = 16.dp))
                         
                         // Text Value Color
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

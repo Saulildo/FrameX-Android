@@ -6,7 +6,7 @@ description: Privacy policy for the FrameX Android application
 
 # Privacy Policy — FrameX
 
-**Effective date:** February 23, 2026  
+**Effective date:** April 29, 2026  
 **App:** FrameX – FPS Meter & Performance Overlay  
 **Developer:** MaheshSharan  
 **Contact:** [Open a GitHub issue](https://github.com/MaheshSharan/FrameX-Android/issues)
@@ -34,7 +34,7 @@ FrameX **does not** collect:
 
 ## Data Storage
 
-All user preferences (overlay position, appearance settings, enabled metrics) are stored **locally on your device** using Android's `SharedPreferences`. This data never leaves your device.
+All user preferences (overlay position, appearance settings, enabled metrics, and gaming mode whitelist) are stored **locally on your device** using Android's `SharedPreferences`. This data never leaves your device.
 
 ---
 
@@ -49,6 +49,9 @@ All user preferences (overlay position, appearance settings, enabled metrics) ar
 | Request ignore battery optimizations | Survive aggressive OEM background-kill policies |
 | Receive boot completed | Optionally restart the overlay after device reboot |
 | Internet | Used **only** to measure network latency (ping to google.com). No personal data or browsing data is transmitted. |
+| Kill background processes | Used to purge cached background processes during Gaming Mode activation. |
+| Access notification policy | Required to toggle Do Not Disturb mode during Gaming sessions. |
+| Foreground service (Special Use) | Ensures Gaming Mode stays active on Android 14+ devices. |
 
 ---
 
