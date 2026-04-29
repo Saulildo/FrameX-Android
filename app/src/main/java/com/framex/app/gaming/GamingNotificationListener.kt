@@ -3,6 +3,12 @@ package com.framex.app.gaming
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 /**
  * Notification Listener Service that intercepts and cancels ALL incoming
@@ -18,6 +24,44 @@ import dagger.hilt.android.AndroidEntryPoint
 @AndroidEntryPoint
 class GamingNotificationListener : NotificationListenerService() {
 
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        // Observe Gaming Mode state — when it flips to active, immediately purge
+        // every existing notification in the tray (except our own FGS / recovery ones).
+        serviceScope.launch {
+            GamingModeEngine.isActive.collectLatest { active ->
+                if (active) {
+                    purgeExistingNotifications()
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        serviceScope.cancel()
+    }
+
+    /**
+     * Walk the current notification tray and cancel everything that isn't ours.
+     */
+    private fun purgeExistingNotifications() {
+        try {
+            val current = activeNotifications ?: return
+            for (sbn in current) {
+                if (sbn.packageName == packageName) {
+                    if (sbn.id == GamingModeService.NOTIFICATION_ID ||
+                        sbn.id == GamingModeEngine.RECOVERY_NOTIFICATION_ID) continue
+                }
+                try {
+                    cancelNotification(sbn.key)
+                } catch (_: Exception) { /* non-fatal */ }
+            }
+        } catch (_: Exception) { /* service might be disconnected */ }
+    }
+
     /**
      * Called whenever a new notification is posted.
      * If Gaming Mode is active, cancel it immediately.
@@ -25,8 +69,10 @@ class GamingNotificationListener : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn == null) return
 
-        // Do not touch our own gaming-mode notification — that would cause a loop.
-        if (sbn.packageName == packageName && sbn.id == GamingModeService.NOTIFICATION_ID) return
+        // Do not touch our own notifications — that would cause a loop or hide recovery alerts.
+        if (sbn.packageName == packageName) {
+            if (sbn.id == GamingModeService.NOTIFICATION_ID || sbn.id == GamingModeEngine.RECOVERY_NOTIFICATION_ID) return
+        }
 
         if (GamingModeEngine.isActive.value) {
             try {

@@ -20,13 +20,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.graphicsLayer
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -47,6 +48,7 @@ import com.framex.app.shizuku.ShizukuManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -80,6 +82,9 @@ class PerformanceViewModel @Inject constructor(
     private val _userApps = MutableStateFlow<List<AppInfo>>(emptyList())
     val userApps = _userApps.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    private val _googleApps = MutableStateFlow<List<AppInfo>>(emptyList())
+    val googleApps = _googleApps.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     init {
         loadUserApps()
     }
@@ -88,6 +93,9 @@ class PerformanceViewModel @Inject constructor(
         viewModelScope.launch {
             _userApps.value = withContext(Dispatchers.IO) {
                 gamingModeEngine.getInstalledUserApps()
+            }
+            _googleApps.value = withContext(Dispatchers.IO) {
+                gamingModeEngine.getGoogleAppsForWhitelist()
             }
         }
     }
@@ -118,6 +126,7 @@ class PerformanceViewModel @Inject constructor(
     }
 
     val safeToSuspendList: List<String> get() = gamingModeEngine.SAFE_TO_SUSPEND
+    val googleSafeToSuspendList: List<String> get() = gamingModeEngine.GOOGLE_SAFE_TO_SUSPEND
     val gamingDaemonsList: List<String> get() = gamingModeEngine.GAMING_DAEMONS
 }
 
@@ -248,6 +257,7 @@ fun PerformanceScreen(
     val hasShizukuPermission by viewModel.hasShizukuPermission.collectAsState()
     val whitelist by viewModel.whitelist.collectAsState()
     val userApps by viewModel.userApps.collectAsState()
+    val googleApps by viewModel.googleApps.collectAsState()
 
     val nm = remember { context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager }
 
@@ -311,7 +321,7 @@ fun PerformanceScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onNavigateBack) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 Text(
@@ -584,7 +594,7 @@ fun PerformanceScreen(
                             }) else null,
                             actionLabel = if (isShizukuAvailable) "Grant" else "Open"
                         )
-                        Divider(color = Color.White.copy(0.04f))
+                        HorizontalDivider(color = Color.White.copy(0.04f))
                         RequirementRow(
                             label = "DND / Interruption Policy",
                             description = if (hasDndAccess) "Can suppress notifications via DND"
@@ -594,7 +604,7 @@ fun PerformanceScreen(
                                 context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
                             }
                         )
-                        Divider(color = Color.White.copy(0.04f))
+                        HorizontalDivider(color = Color.White.copy(0.04f))
                         RequirementRow(
                             label = "Notification Listener",
                             description = if (hasNotifListenerAccess) "Active — system notifications will be cancelled"
@@ -680,7 +690,67 @@ fun PerformanceScreen(
                                 onToggle = { viewModel.toggleWhitelist(app.packageName) }
                             )
                             if (idx < userApps.lastIndex) {
-                                Divider(
+                                HorizontalDivider(
+                                    color = Color.White.copy(0.04f),
+                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+        }
+
+        // ---- Google Apps section ------------------------------------------
+        if (googleApps.isNotEmpty()) {
+            item {
+                Column(modifier = Modifier.padding(horizontal = 24.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "GOOGLE APPS",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+                        Text(
+                            "${googleApps.count { whitelist.contains(it.packageName) }} protected",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF4285F4)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "Google apps that will be suspended during Gaming Mode. " +
+                            "Toggle ON to keep an app running.",
+                        color = Color.Gray,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(start = 4.dp, bottom = 10.dp)
+                    )
+                }
+            }
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF4285F4).copy(0.15f))
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        googleApps.forEachIndexed { idx, app ->
+                            AppWhitelistRow(
+                                app = app,
+                                isWhitelisted = whitelist.contains(app.packageName),
+                                onToggle = { viewModel.toggleWhitelist(app.packageName) }
+                            )
+                            if (idx < googleApps.lastIndex) {
+                                HorizontalDivider(
                                     color = Color.White.copy(0.04f),
                                     modifier = Modifier.padding(horizontal = 4.dp)
                                 )

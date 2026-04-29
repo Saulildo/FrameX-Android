@@ -13,9 +13,14 @@ import androidx.core.app.NotificationCompat
 import com.framex.app.MainActivity
 import com.framex.app.R
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -33,6 +38,8 @@ class GamingModeService : Service() {
 
     @Inject
     lateinit var gamingModeEngine: GamingModeEngine
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onCreate() {
         super.onCreate()
@@ -62,9 +69,20 @@ class GamingModeService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         _isRunning.value = false
+        serviceScope.cancel()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+    
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        // OriginOS 6 "Final Boss" Fix: If user swipes app from Recents, FGS is killed instantly.
+        // We trigger immediate teardown to restore system apps before the process dies.
+        serviceScope.launch {
+            gamingModeEngine.disableGamingMode()
+            stopSelf()
+        }
+    }
 
     // ---- Notification -------------------------------------------------------
 
