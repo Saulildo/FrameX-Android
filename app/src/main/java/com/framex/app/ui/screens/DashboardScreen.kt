@@ -29,7 +29,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import android.content.Intent
 import android.provider.Settings
-import android.widget.Toast
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +60,7 @@ fun DashboardScreen(
     onNavigateToOverlayCustomization: () -> Unit,
     onNavigateToPermissions: () -> Unit,
     onNavigateToAbout: () -> Unit,
+    onNavigateToPerformance: () -> Unit,
     viewModel: PermissionsViewModel = androidx.hilt.navigation.compose.hiltViewModel(),
     dashboardViewModel: DashboardViewModel = androidx.hilt.navigation.compose.hiltViewModel()
 ) {
@@ -321,11 +321,11 @@ fun DashboardScreen(
             Spacer(modifier = Modifier.height(16.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 QuickActionButton(
-                    title = "Diagnostics",
-                    subtitle = "Polling interval · Logs",
+                    title = "Performance",
+                    subtitle = "Game Mode · RAM Boost",
                     iconContainerColor = Color(0xFF10B981).copy(alpha = 0.1f),
                     iconContentColor = Color(0xFF34D399),
-                    onClick = { Toast.makeText(context, "Diagnostics panel coming in v1.1", Toast.LENGTH_SHORT).show() },
+                    onClick = onNavigateToPerformance,
                     modifier = Modifier.weight(1f),
                     icon = { Icon(Icons.Default.Bolt, null) }
                 )
