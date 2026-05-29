@@ -15,6 +15,33 @@ android {
         targetSdk = 34
         versionCode = 2
         versionName = "1.1"
+
+        // Native GPU instrumentation layers (Vulkan + GLES). 64-bit + 32-bit so the layer ABI
+        // matches whatever the target game runs as.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+            }
+        }
+    }
+
+    // Build the Vulkan/GLES instrumentation layers from src/main/cpp.
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    // The layer .so files must exist on disk in our nativeLibraryDir so the target app's
+    // GraphicsEnvironment can dlopen them when injected.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     buildFeatures {

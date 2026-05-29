@@ -29,6 +29,7 @@
     <application
         android:name=".FrameXApplication"
         android:allowBackup="true"
+        android:extractNativeLibs="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="FrameX"
@@ -47,6 +48,18 @@
         <!-- FPS overlay foreground service (existing) -->
         <service
             android:name=".overlay.OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback|dataSync"
+            android:stopWithTask="false" />
+
+        <!--
+            Floating Performance HUD (Metal HUD replica).
+            Hosts a transparent WebView system overlay (SYSTEM_ALERT_WINDOW) and streams root
+            telemetry into it. mediaPlayback|dataSync is the permission-free FGS type pair already
+            used by the overlay service and keeps the process alive under OEM game-boost managers.
+        -->
+        <service
+            android:name=".hud.FloatingWindowService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback|dataSync"
             android:stopWithTask="false" />

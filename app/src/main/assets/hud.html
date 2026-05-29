@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metal HUD - Expanded Replica</title>
+    <style>
+        body {
+            margin: 0;
+            background: rgba(0, 0, 0, 0); /* transparent for the Android overlay */
+            height: 100vh;
+            display: flex;
+            align-items: flex-start;
+            justify-content: flex-start;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .hud-container {
+            background-color: rgba(75, 75, 75, 0.6);
+            border-radius: 12px;
+            padding: 10px 14px 8px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        .hud-text {
+            margin: 0;
+            font-family: monospace;
+            font-size: 15px;
+            line-height: 1.3;
+            font-weight: 500;
+            letter-spacing: 0;
+            white-space: pre;
+        }
+
+        .c-white  { color: #FFFFFF; }
+        .c-salmon { color: #FF756D; }
+        .c-cyan   { color: #4EB4D8; }
+        .c-green  { color: #64D262; }
+        .c-amber  { color: #E8C45A; }
+        .c-dim    { color: #B8B8B8; }
+
+        .graph-container {
+            width: 100%;
+            height: 70px;
+            position: relative;
+            margin-top: 2px;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="hud-container">
+<pre class="hud-text" id="hudData"><span class="c-white" id="txt-device">Apple M2 Pro          [960x540]</span>
+<span class="c-white" id="txt-display">1.0x Direct       —       120Hz</span>
+<span class="c-white">Thermal:    </span><span class="c-green" id="val-thermal">Nominal</span>
+<span class="c-white">FPS:    <span id="val-fps">  0.00</span> </span><span class="c-salmon">[<span id="min-fps">  0.00</span> <span id="max-fps">  0.00</span>]</span>
+<span class="c-green">GPU:    <span id="val-gpu">  0.00</span> </span><span class="c-salmon">[<span id="min-gpu">  0.00</span> <span id="max-gpu">  0.00</span>]</span>
+<span class="c-white">Present Delay:   <span id="val-present">  0.00</span></span>
+<span class="c-white">Frame Interval:  <span id="val-interval">  0.00</span></span>
+<span class="c-cyan">Cmd Buffer CPU:  <span id="val-cmd">  0.00</span></span>
+<span class="c-cyan">Render Enc CPU:  <span id="val-render">  0.00</span></span>
+<span class="c-cyan">Compute Enc CPU: <span id="val-compute">  0.00</span></span>
+<span class="c-cyan">Blit Encoder:    <span id="val-blit">  0.00</span></span>
+<span class="c-white">Mem:  <span id="val-mem">0.00</span>GB    </span><span class="c-green">[<span id="val-memavail">0</span>MB free]</span></pre>
+        <div class="graph-container">
+            <canvas id="hudGraph"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('hudGraph');
+        const ctx = canvas.getContext('2d');
+
+        let gpuHistory = [];
+        let intervalHistory = [];
+
+        // Running session min/max (Metal HUD shows the extremes since the HUD opened).
+        let fpsMin = Infinity, fpsMax = 0;
+        let gpuMin = Infinity, gpuMax = 0;
+
+        // Render a value: negative / missing => "—" (not applicable for this API), else fixed-point.
+        function f(v, decimals) {
+            if (v === undefined || v === null || v < 0 || Number.isNaN(v)) return '—';
+            return Number(v).toFixed(decimals === undefined ? 2 : decimals);
+        }
+
+        function pad(str, width) {
+            str = String(str);
+            return str.length >= width ? str : ' '.repeat(width - str.length) + str;
+        }
+
+        // Called from Android (FloatingWindowService) every ~250ms with a single JSON object.
+        function updateHudData(d) {
+            document.getElementById('txt-device').innerText =
+                `${String(d.device).padEnd(18, ' ')}[${d.resolution}]`;
+
+            const apiTag = (d.api && d.api !== '—') ? d.api : 'no layer';
+            document.getElementById('txt-display').innerText =
+                `${String(d.scale).padEnd(12, ' ')}${pad(apiTag, 9)}  ${d.hz}Hz`;
+
+            // Thermal label + colour.
+            const thermalEl = document.getElementById('val-thermal');
+            thermalEl.innerText = d.thermal;
+            thermalEl.className =
+                d.thermal === 'Severe' ? 'c-salmon' :
+                d.thermal === 'Fair'   ? 'c-amber'  : 'c-green';
+
+            // FPS + running min/max.
+            if (d.fps > 0) { fpsMin = Math.min(fpsMin, d.fps); fpsMax = Math.max(fpsMax, d.fps); }
+            document.getElementById('val-fps').innerText = pad(f(d.fps), 6);
+            document.getElementById('min-fps').innerText = pad(fpsMin === Infinity ? f(-1) : f(fpsMin), 6);
+            document.getElementById('max-fps').innerText = pad(f(fpsMax), 6);
+
+            // GPU ms + running min/max (only track when a layer is reporting real values).
+            if (d.gpuMs >= 0) { gpuMin = Math.min(gpuMin, d.gpuMs); gpuMax = Math.max(gpuMax, d.gpuMs); }
+            document.getElementById('val-gpu').innerText = pad(f(d.gpuMs), 6);
+            document.getElementById('min-gpu').innerText = pad(gpuMin === Infinity ? f(-1) : f(gpuMin), 6);
+            document.getElementById('max-gpu').innerText = pad(f(gpuMax), 6);
+
+            document.getElementById('val-present').innerText = pad(f(d.presentDelayMs), 6);
+            document.getElementById('val-interval').innerText = pad(f(d.frameIntervalMs), 6);
+            document.getElementById('val-cmd').innerText = pad(f(d.cmdBufferCpuMs), 6);
+            document.getElementById('val-render').innerText = pad(f(d.renderEncoderCpuMs), 6);
+            document.getElementById('val-compute').innerText = pad(f(d.computeEncoderCpuMs), 6);
+            document.getElementById('val-blit').innerText = pad(f(d.blitEncoderMs), 6);
+
+            document.getElementById('val-mem').innerText = f(d.memUsedGb);
+            document.getElementById('val-memavail').innerText = f(d.memAvailMb, 0);
+
+            updateGraph(d.gpuMs, d.frameIntervalMs);
+        }
+
+        function updateGraph(gpu, interval) {
+            gpuHistory.push(gpu < 0 ? 0 : gpu);
+            intervalHistory.push(interval < 0 ? 0 : interval);
+            if (gpuHistory.length > 100) gpuHistory.shift();
+            if (intervalHistory.length > 100) intervalHistory.shift();
+            drawGraph();
+        }
+
+        function drawGraph() {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.scale(dpr, dpr);
+
+            const w = rect.width;
+            const h = rect.height;
+            ctx.clearRect(0, 0, w, h);
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(0, 0, w, h);
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+            ctx.beginPath();
+            for (let i = 1; i < 10; i++) {
+                const x = (w / 10) * i;
+                ctx.moveTo(Math.floor(x) + 0.5, 0);
+                ctx.lineTo(Math.floor(x) + 0.5, h);
+            }
+            ctx.stroke();
+
+            function drawPath(data, color) {
+                if (data.length === 0) return;
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1.5;
+                ctx.lineJoin = 'round';
+                ctx.beginPath();
+                const maxVal = Math.max(16.7, ...data); // dynamic scaling, floor at ~1 frame @60Hz
+                for (let i = 0; i < data.length; i++) {
+                    const x = (i / 100) * w;
+                    const y = h - ((data[i] / maxVal) * h);
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            }
+
+            drawPath(intervalHistory, '#4EB4D8'); // frame interval (ms)
+            drawPath(gpuHistory, '#64D262');      // GPU time (ms)
+        }
+
+        window.addEventListener('resize', drawGraph);
+    </script>
+</body>
+</html>
