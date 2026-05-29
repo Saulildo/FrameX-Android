@@ -6,8 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import com.framex.app.core.root.RootManager
 import com.framex.app.repository.SettingsRepository
-import com.framex.app.shizuku.ShizukuManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,7 +41,7 @@ data class AppInfo(
 @Singleton
 class GamingModeEngine @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val shizukuManager: ShizukuManager,
+    private val rootManager: RootManager,
     private val settingsRepository: SettingsRepository
 ) {
 
@@ -142,9 +142,8 @@ class GamingModeEngine @Inject constructor(
         "com.microsoft.deviceintegrationservice"  // ThermalInfoService bridge
     )
 
-    // Always protected — losing Shizuku = losing the ADB bridge.
+    // Always protected — never suspend FrameX itself or our content-blocker partners.
     private val HARD_WHITELIST = setOf(
-        "moe.shizuku.privileged.api",  // Shizuku itself
         context.packageName,           // FrameX itself
         "com.adguard.android",
         "com.adguard.vpn"
@@ -204,8 +203,8 @@ class GamingModeEngine @Inject constructor(
      * 4. Enable DND (if policy access is granted)
      */
     suspend fun enableGamingMode(userWhitelist: Set<String>) {
-        if (!shizukuManager.isShizukuAvailable.value || !shizukuManager.hasPermission.value) {
-            _state.value = GamingModeState.Error("Shizuku not available or permission not granted")
+        if (!rootManager.isRootAvailable.value) {
+            _state.value = GamingModeState.Error("Root access not available")
             return
         }
 
@@ -282,7 +281,7 @@ class GamingModeEngine @Inject constructor(
             // Phase 3 — Kill cached background processes
             // ----------------------------------------------------------------
             _state.value = GamingModeState.Enabling(0.96f, "Purging background cache…")
-            shizukuManager.executeCommand("am kill-all")
+            rootManager.executeCommand("am kill-all")
 
             // ----------------------------------------------------------------
             // Phase 4 — Enable DND via NotificationManager policy
@@ -313,7 +312,7 @@ class GamingModeEngine @Inject constructor(
      */
     private suspend fun suspendOrRestrict(packageName: String, label: String) {
         // Step 1: Try pm suspend (the most effective state)
-        val suspendResult = shizukuManager.executeCommand("pm suspend --user 0 $packageName")
+        val suspendResult = rootManager.executeCommand("pm suspend --user 0 $packageName")
         
         // Step 2: Check if it was blocked by security policies
         val isBlocked = suspendResult.contains("SecurityException", ignoreCase = true) ||
@@ -323,16 +322,16 @@ class GamingModeEngine @Inject constructor(
         if (isBlocked) {
             // Step 3: Fallback — Kill and neuter the app via AppOps
             // This won't turn the icon gray but will prevent it from running.
-            shizukuManager.executeCommand("am force-stop $packageName")
-            shizukuManager.executeCommand("cmd appops set $packageName RUN_IN_BACKGROUND ignore")
-            shizukuManager.executeCommand("cmd appops set $packageName RUN_ANY_IN_BACKGROUND ignore")
-            shizukuManager.executeCommand("cmd appops set $packageName START_FOREGROUND ignore")
+            rootManager.executeCommand("am force-stop $packageName")
+            rootManager.executeCommand("cmd appops set $packageName RUN_IN_BACKGROUND ignore")
+            rootManager.executeCommand("cmd appops set $packageName RUN_ANY_IN_BACKGROUND ignore")
+            rootManager.executeCommand("cmd appops set $packageName START_FOREGROUND ignore")
         } else {
             // Even if suspended successfully, we still apply AppOps as a backup layer
-            shizukuManager.executeCommand("cmd appops set $packageName RUN_IN_BACKGROUND ignore")
-            shizukuManager.executeCommand("cmd appops set $packageName RUN_ANY_IN_BACKGROUND ignore")
+            rootManager.executeCommand("cmd appops set $packageName RUN_IN_BACKGROUND ignore")
+            rootManager.executeCommand("cmd appops set $packageName RUN_ANY_IN_BACKGROUND ignore")
             // Note: am force-stop is always good practice to clear existing RAM
-            shizukuManager.executeCommand("am force-stop $packageName")
+            rootManager.executeCommand("am force-stop $packageName")
         }
     }
 
@@ -349,16 +348,16 @@ class GamingModeEngine @Inject constructor(
         try {
             // Unsuspend all OEM packages
             SAFE_TO_SUSPEND.forEach { pkg ->
-                shizukuManager.executeCommand("pm unsuspend --user 0 $pkg")
+                rootManager.executeCommand("pm unsuspend --user 0 $pkg")
             }
 
             // Unsuspend + restore AppOps for user packages we actually changed
             val affected = settingsRepository.getGamingAffectedPackages()
             affected.forEach { pkg ->
-                shizukuManager.executeCommand("pm unsuspend --user 0 $pkg")
-                shizukuManager.executeCommand("cmd appops set $pkg RUN_IN_BACKGROUND allow")
-                shizukuManager.executeCommand("cmd appops set $pkg RUN_ANY_IN_BACKGROUND allow")
-                shizukuManager.executeCommand("cmd appops set $pkg START_FOREGROUND allow")
+                rootManager.executeCommand("pm unsuspend --user 0 $pkg")
+                rootManager.executeCommand("cmd appops set $pkg RUN_IN_BACKGROUND allow")
+                rootManager.executeCommand("cmd appops set $pkg RUN_ANY_IN_BACKGROUND allow")
+                rootManager.executeCommand("cmd appops set $pkg START_FOREGROUND allow")
             }
             settingsRepository.setGamingAffectedPackages(emptySet())
 
@@ -381,15 +380,14 @@ class GamingModeEngine @Inject constructor(
     /** Called on app start-up to recover state that was active before a kill. */
     fun recoverPersistedState() {
         if (settingsRepository.isGamingModeActive()) {
-            if (shizukuManager.isShizukuAvailable.value && shizukuManager.hasPermission.value) {
+            if (rootManager.isRootAvailable.value) {
                 // The FGS may have been killed but the device is still in the modified state.
                 // Mark as active so the UI reflects reality; the user can deactivate normally.
                 _isActive.value = true
                 _state.value = GamingModeState.Active
             } else {
-                // OriginOS 6 "Final Boss" Fix: Reboot Dilemma.
-                // Gaming Mode was active but Shizuku is gone (e.g. after reboot).
-                // We MUST notify the user to reconnect Shizuku to restore their apps.
+                // Reboot dilemma: Gaming Mode was active but root isn't ready yet (e.g. just after
+                // boot, before the su grant). Notify the user so they can restore their apps.
                 showRecoveryNotification()
             }
         }
@@ -407,7 +405,7 @@ class GamingModeEngine @Inject constructor(
 
         val notification = androidx.core.app.NotificationCompat.Builder(context, GamingModeService.CHANNEL_ID)
             .setContentTitle("Gaming Mode Interrupted")
-            .setContentText("Tap to connect Shizuku and restore your apps.")
+            .setContentText("Tap to grant root and restore your apps.")
             .setSmallIcon(com.framex.app.R.drawable.ic_notification)
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
             .setCategory(androidx.core.app.NotificationCompat.CATEGORY_ERROR)

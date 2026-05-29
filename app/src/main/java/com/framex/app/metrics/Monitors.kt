@@ -8,7 +8,7 @@ import android.net.TrafficStats
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
-import com.framex.app.shizuku.ShizukuManager
+import com.framex.app.core.root.RootManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -20,7 +20,7 @@ import kotlin.math.roundToInt
 @Singleton
 class FpsMonitor @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val shizukuManager: ShizukuManager
+    private val rootManager: RootManager
 ) {
     // Exact approach decoded from PerfStats smali (OverlayService$FPSMonitor.smali):
     //
@@ -41,21 +41,18 @@ class FpsMonitor @Inject constructor(
         var lastKnownFps = 0
 
         while (true) {
-            val shizukuReady = shizukuManager.isShizukuAvailable.value &&
-                    shizukuManager.hasPermission.value
-
-            if (shizukuReady) {
+            if (rootManager.isRootAvailable.value) {
                 try {
                     if (!initialized) {
                         // Clear any stale stats and start fresh accumulation.
                         // Do NOT dump yet — SurfaceFlinger needs ≥1 second to collect frames.
-                        shizukuManager.executeCommand(
+                        rootManager.executeCommand(
                             "dumpsys SurfaceFlinger --timestats -clear -enable"
                         )
                         initialized = true
                     } else {
                         // Step 1: dump the accumulated average (same as PerfStats step 1)
-                        val output = shizukuManager.executeCommand(
+                        val output = rootManager.executeCommand(
                             "dumpsys SurfaceFlinger --timestats -dump"
                         )
 
@@ -74,7 +71,7 @@ class FpsMonitor @Inject constructor(
                         // Only clear during the first 1000ms of each 3000ms wall-clock cycle.
                         // Guarantees ≥2 seconds of accumulation before the next clear fires.
                         if (System.currentTimeMillis() % 3000L < 1000L) {
-                            shizukuManager.executeCommand(
+                            rootManager.executeCommand(
                                 "dumpsys SurfaceFlinger --timestats -clear -enable"
                             )
                         }
@@ -94,9 +91,8 @@ class FpsMonitor @Inject constructor(
 
 @Singleton
 class CpuMonitor @Inject constructor() {
-    // Exact same approach as PerfStats: read cpu0 current clock frequency from sysfs.
-    // This file is world-readable on all Android devices — no Shizuku required.
-    // Returns kHz; divide by 1000 = MHz.
+    // Read cpu0 current clock frequency from sysfs. This file is world-readable on all Android
+    // devices — no privileged access required. Returns kHz; divide by 1000 = MHz.
     val cpuUsage: Flow<Int> = flow {
         while (true) {
             try {
@@ -116,18 +112,17 @@ class CpuMonitor @Inject constructor() {
 @Singleton
 class RamMonitor @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val shizukuManager: ShizukuManager
+    private val rootManager: RootManager
 ) {
     data class RamState(val usedGb: Float, val totalGb: Float)
 
     val ramUsage: Flow<RamState> = flow {
         while (true) {
-            val state = if (shizukuManager.isShizukuAvailable.value &&
-                shizukuManager.hasPermission.value) {
+            val state = if (rootManager.isRootAvailable.value) {
                 // Exact PerfStats command: "free -m | grep Mem"
                 // Output: "Mem: <total> <used> <free> <shared> <buf/cache> <available>"
                 try {
-                    val output = shizukuManager.executeCommand("free -m | grep Mem")
+                    val output = rootManager.executeCommand("free -m | grep Mem")
                     val parts = output.trim().split("\\s+".toRegex())
                     val totalMb = parts.getOrNull(1)?.toFloatOrNull() ?: 0f
                     val usedMb = parts.getOrNull(2)?.toFloatOrNull() ?: 0f
@@ -196,16 +191,15 @@ class NetworkMonitor @Inject constructor() {
 @Singleton
 class BatteryMonitor @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val shizukuManager: ShizukuManager
+    private val rootManager: RootManager
 ) {
     val batteryTemp: Flow<Float> = flow {
         while (true) {
-            val temp = if (shizukuManager.isShizukuAvailable.value &&
-                shizukuManager.hasPermission.value) {
+            val temp = if (rootManager.isRootAvailable.value) {
                 // Exact PerfStats command: "dumpsys battery | grep temperature"
                 // Output line: "  temperature: 280"  → strip non-digits → 280 ÷ 10 = 28.0°C
                 try {
-                    val output = shizukuManager.executeCommand(
+                    val output = rootManager.executeCommand(
                         "dumpsys battery | grep temperature"
                     )
                     val digits = output.replace(Regex("\\D"), "")
@@ -250,15 +244,15 @@ class ThermalMonitor @Inject constructor(
 
 @Singleton
 class PingMonitor @Inject constructor(
-    private val shizukuManager: ShizukuManager
+    private val rootManager: RootManager
 ) {
     val ping: Flow<Int> = flow {
         while (true) {
-            if (shizukuManager.isShizukuAvailable.value && shizukuManager.hasPermission.value) {
+            if (rootManager.isRootAvailable.value) {
                 try {
                     // Exact PerfStats command: "ping -c 1 google.com"
                     // Parse: split on "time=" → take [1] → split on " " → take [0] = "12.4"
-                    val output = shizukuManager.executeCommand("ping -c 1 google.com")
+                    val output = rootManager.executeCommand("ping -c 1 google.com")
                     val pingMs = if (output.contains("time=")) {
                         output.split("time=").getOrNull(1)
                             ?.split(" ")?.getOrNull(0)

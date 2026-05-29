@@ -6,8 +6,8 @@ description: Real-time FPS meter and performance overlay for Android
 
 # FrameX
 
-Real-time FPS meter and system performance overlay for Android.  
-No root required — powered by [Shizuku](https://github.com/RikkaApps/Shizuku).
+Real-time FPS meter, Metal-HUD-style GPU overlay, and system performance monitor for Android.  
+Powered by root (su) with real Vulkan/OpenGL instrumentation.
 
 ---
 

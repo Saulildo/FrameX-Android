@@ -27,7 +27,7 @@ Real-time FPS meter and system stats overlay for Android games.
 ```
 FrameX is a lightweight performance overlay for Android that displays real-time system metrics on top of games and apps.
 
-Built for gamers, developers, and power users, FrameX provides accurate frame rate data and system telemetry without requiring root access. Powered by Shizuku for secure privileged access.
+Built for gamers, developers, and power users, FrameX provides accurate frame rate data and deep GPU/system telemetry on rooted devices, including a full replica of the Metal Performance HUD.
 
 ────────────────────────────
 
@@ -67,11 +67,11 @@ All settings persist across restarts.
 
 ────────────────────────────
 
-Powered by Shizuku
+Powered by Root
 
-FrameX uses the Shizuku API to securely access advanced system telemetry without requiring root. Shizuku must be installed and activated separately via wireless ADB or Sui (for rooted devices).
+FrameX uses a root (su) shell to access advanced system telemetry and to hook the Vulkan/OpenGL pipeline of the game you profile, enabling per-frame GPU, present, and encoder timings. A rooted device (Magisk / KernelSU) is required.
 
-FrameX does not bypass system protections and does not modify game behavior.
+FrameX does not modify game behavior.
 
 ────────────────────────────
 
@@ -87,7 +87,7 @@ Internet permission is used only for optional ping measurement.
 Requirements
 
 • Android 8.0 (API 26) or higher
-• Shizuku installed and running
+• Rooted device (Magisk / KernelSU)
 
 FrameX is designed as a monitoring tool for performance insight and diagnostics. It does not boost, modify, or alter game performance.
 ```
@@ -149,7 +149,7 @@ Each screenshot = one benefit statement.
 | Overlay on game | "Real-Time FPS Monitoring" |
 | Drag demo | "Drag Anywhere on Screen" |
 | Appearance screen | "Fully Customizable Overlay" |
-| Permissions screen | "Powered by Shizuku — No Root Required" |
+| Permissions screen | "Powered by Root — Deep GPU Telemetry" |
 | Expanded mode | "CPU · RAM · Temp · Network · Ping" |
 
 Avoid: blank dark screens, jargon walls, tiny unreadable text.
@@ -163,8 +163,8 @@ Avoid: blank dark screens, jargon walls, tiny unreadable text.
 - [ ] Privacy policy URL entered in Play Console
 - [ ] Tested on Android 8.0 (API 26) — minimum SDK
 - [ ] Tested on Android 14/15 — latest
-- [ ] Verified graceful behavior when Shizuku is not installed (no crash)
-- [ ] Verified Shizuku requirement is clearly explained in onboarding
+- [ ] Verified graceful behavior when root is not available (no crash)
+- [ ] Verified the root requirement is clearly explained in onboarding
 - [ ] No language in app suggesting FPS boosting or game modification
 - [ ] Reviewed all permissions — each has a stated purpose
 - [ ] App content rating questionnaire completed in Play Console

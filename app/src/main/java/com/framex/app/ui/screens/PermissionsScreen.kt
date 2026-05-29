@@ -34,10 +34,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.framex.app.shizuku.ShizukuManager
+import com.framex.app.core.root.RootManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -51,20 +52,18 @@ import androidx.lifecycle.LifecycleEventObserver
 
 @HiltViewModel
 class PermissionsViewModel @Inject constructor(
-    private val shizukuManager: ShizukuManager
+    private val rootManager: RootManager
 ) : ViewModel() {
-    val isShizukuAvailable = shizukuManager.isShizukuAvailable
+    val isRootAvailable = rootManager.isRootAvailable
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
-        
-    val hasShizukuPermission = shizukuManager.hasPermission
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
-        
-    fun requestShizukuPermission() {
-        shizukuManager.requestPermission()
+
+    /** Triggers the su grant prompt (or re-verifies an existing grant). */
+    fun requestRoot() {
+        viewModelScope.launch { rootManager.refresh() }
     }
-    
-    fun refreshShizukuState() {
-        shizukuManager.refreshState()
+
+    fun refreshRootState() {
+        viewModelScope.launch { rootManager.refresh() }
     }
 }
 
@@ -74,8 +73,7 @@ fun PermissionsScreen(
     viewModel: PermissionsViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
-    val isShizukuAvailable by viewModel.isShizukuAvailable.collectAsState()
-    val hasShizukuPermission by viewModel.hasShizukuPermission.collectAsState()
+    val isRootAvailable by viewModel.isRootAvailable.collectAsState()
     var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     
     fun checkUsageStats(): Boolean {
@@ -105,7 +103,7 @@ fun PermissionsScreen(
                 hasOverlayPermission = Settings.canDrawOverlays(context)
                 hasUsageStatsPermission = checkUsageStats()
                 hasBatteryOptDisabled = powerManager.isIgnoringBatteryOptimizations(context.packageName)
-                viewModel.refreshShizukuState()
+                viewModel.refreshRootState()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -140,14 +138,14 @@ fun PermissionsScreen(
                 Text("Setup FrameX", style = MaterialTheme.typography.titleLarge.copy(fontSize = 28.sp), color = Color.White)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "FrameX needs specific permissions to monitor performance metrics like FPS, thermal stats, and power usage without root access.",
+                    text = "FrameX needs root and a few system permissions to monitor performance metrics like FPS, GPU timings, thermal stats, and power usage.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.Gray
                 )
                 
                 Spacer(modifier = Modifier.height(24.dp))
                 
-                // Shizuku Card
+                // Root Access Card
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -162,23 +160,23 @@ fun PermissionsScreen(
                                 modifier = Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("A", color = Color.White, fontWeight = FontWeight.Bold) // Mock ADB icon
+                                Text("#", color = Color.White, fontWeight = FontWeight.Bold) // su prompt
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
-                                Text("Shizuku Service", color = Color.White, fontWeight = FontWeight.Bold)
+                                Text("Root Access", color = Color.White, fontWeight = FontWeight.Bold)
                                 Row(
                                     modifier = Modifier.clip(CircleShape)
-                                        .background(if (isShizukuAvailable && hasShizukuPermission) Color(0xFF22C55E).copy(0.1f) else Color.Red.copy(0.1f))
+                                        .background(if (isRootAvailable) Color(0xFF22C55E).copy(0.1f) else Color.Red.copy(0.1f))
                                         .padding(horizontal = 8.dp, vertical = 2.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(if (isShizukuAvailable && hasShizukuPermission) Color(0xFF22C55E) else Color.Red))
+                                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(if (isRootAvailable) Color(0xFF22C55E) else Color.Red))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        if (isShizukuAvailable && hasShizukuPermission) "RUNNING & GRANTED" else if (isShizukuAvailable) "PERMISSION REQUIRED" else "NOT RUNNING", 
-                                        color = if (isShizukuAvailable && hasShizukuPermission) Color(0xFF22C55E) else Color.Red, 
-                                        fontSize = 10.sp, 
+                                        if (isRootAvailable) "GRANTED" else "NOT GRANTED",
+                                        color = if (isRootAvailable) Color(0xFF22C55E) else Color.Red,
+                                        fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
@@ -186,49 +184,23 @@ fun PermissionsScreen(
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "The core bridge for non-root access. Please ensure Shizuku is running via ADB or Wireless Debugging.",
+                            text = "FrameX uses a root (su) shell to read system telemetry and hook the GPU for per-frame timings. Approve the superuser prompt when asked.",
                             color = Color.LightGray,
                             style = MaterialTheme.typography.bodySmall
                         )
                         Spacer(modifier = Modifier.height(16.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            // Launch Button
-                            Button(
-                                onClick = {
-                                    val intent = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
-                                    if (intent != null) {
-                                        context.startActivity(intent)
-                                    } else {
-                                        android.widget.Toast.makeText(context, "Shizuku app not found", android.widget.Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                modifier = Modifier.weight(1f).height(40.dp),
-                                shape = CircleShape,
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = Color.White)
-                            ) {
-                                Text("Launch App", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                            
-                            // Grant Button
-                            Button(
-                                onClick = {
-                                    if (isShizukuAvailable && !hasShizukuPermission) {
-                                        viewModel.requestShizukuPermission()
-                                    } else if (!isShizukuAvailable) {
-                                        android.widget.Toast.makeText(context, "Start Shizuku service first", android.widget.Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                modifier = Modifier.weight(1f).height(40.dp),
-                                shape = CircleShape,
-                                enabled = !hasShizukuPermission,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (hasShizukuPermission) Color(0xFF22C55E) else MaterialTheme.colorScheme.primary,
-                                    disabledContainerColor = Color(0xFF22C55E).copy(alpha = 0.5f),
-                                    disabledContentColor = Color.White
-                                )
-                            ) {
-                                Text(if (hasShizukuPermission) "Authorized" else "Grant Access", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
+                        Button(
+                            onClick = { viewModel.requestRoot() },
+                            modifier = Modifier.fillMaxWidth().height(40.dp),
+                            shape = CircleShape,
+                            enabled = !isRootAvailable,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isRootAvailable) Color(0xFF22C55E) else MaterialTheme.colorScheme.primary,
+                                disabledContainerColor = Color(0xFF22C55E).copy(alpha = 0.5f),
+                                disabledContentColor = Color.White
+                            )
+                        ) {
+                            Text(if (isRootAvailable) "Authorized" else "Grant Root", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -349,7 +321,7 @@ fun PermissionsScreen(
                         Text("Why are these needed?", color = Color.White, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "FrameX operates as a high-privilege tool. Without overlay access, we cannot draw the HUD. Without usage stats, we cannot identify which game is running. Shizuku allows us to bypass Android 14+ restrictions securely.",
+                            "FrameX operates as a high-privilege tool. Without overlay access, we cannot draw the HUD. Without usage stats, we cannot identify which game is running. Root access lets us read low-level GPU/system telemetry and hook the rendering API.",
                             color = Color.Gray,
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -368,7 +340,7 @@ fun PermissionsScreen(
                 .background(MaterialTheme.colorScheme.background.copy(alpha = 0.95f))
                 .padding(24.dp)
         ) {
-            val isAllReady = isShizukuAvailable && hasShizukuPermission && hasOverlayPermission
+            val isAllReady = isRootAvailable && hasOverlayPermission
             Button(
                 onClick = onNavigateBack,
                 colors = ButtonDefaults.buttonColors(

@@ -181,7 +181,7 @@ fun AboutScreen(
             ) {
                 Icon(Icons.Default.Bolt, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Powered by Shizuku API", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Text("Powered by Root", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             }
         }
     }

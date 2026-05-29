@@ -22,6 +22,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.app.NotificationCompat
 import com.framex.app.R
+import com.framex.app.core.root.RootManager
+import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,6 +38,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
+import javax.inject.Inject
 import kotlin.math.abs
 
 /**
@@ -54,7 +57,11 @@ import kotlin.math.abs
  *
  * Start it with [start] (it checks the overlay permission) and stop with [stop].
  */
+@AndroidEntryPoint
 class FloatingWindowService : Service() {
+
+    @Inject
+    lateinit var rootManager: RootManager
 
     private lateinit var windowManager: WindowManager
     private var webView: WebView? = null
@@ -64,10 +71,10 @@ class FloatingWindowService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var telemetryJob: Job? = null
 
-    private val rootShell = RootShell()
-    private val collector = HudTelemetryCollector(rootShell)
+    // Initialised in onCreate() once Hilt has injected rootManager (the shared app-wide su shell).
+    private lateinit var collector: HudTelemetryCollector
+    private lateinit var injector: GpuLayerInjector
     private val ipcServer = HudIpcServer()
-    private val injector = GpuLayerInjector(rootShell)
 
     /** Foreground package we last enabled GPU-layer injection for (avoids redundant re-applies). */
     @Volatile private var lastInjected: String? = null
@@ -77,6 +84,8 @@ class FloatingWindowService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        collector = HudTelemetryCollector(rootManager)
+        injector = GpuLayerInjector(rootManager)
         _isRunning.value = true
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
@@ -105,9 +114,11 @@ class FloatingWindowService : Service() {
         telemetryJob?.cancel()
         ipcServer.close()
         // Best-effort: clear the global GPU-debug-layer settings so we stop instrumenting games
-        // once the HUD is gone. Bounded so teardown never hangs.
-        runCatching { runBlocking { withTimeoutOrNull(1000) { injector.disable() } } }
-        rootShell.close()
+        // once the HUD is gone. Bounded so teardown never hangs. The shared RootManager shell is
+        // NOT closed here — it is an app-wide singleton used by other features.
+        if (::injector.isInitialized) {
+            runCatching { runBlocking { withTimeoutOrNull(1000) { injector.disable() } } }
+        }
         serviceScope.cancel()
         removeOverlay()
         wakeLock?.let { if (it.isHeld) it.release() }
@@ -250,7 +261,7 @@ class FloatingWindowService : Service() {
     private fun startTelemetryLoop() {
         ipcServer.start()
         telemetryJob = serviceScope.launch(Dispatchers.IO) {
-            val rooted = rootShell.init()
+            val rooted = rootManager.refresh()
             if (!rooted) {
                 Log.w(TAG, "Root unavailable — GPU instrumentation + system metrics disabled.")
             }
@@ -278,7 +289,7 @@ class FloatingWindowService : Service() {
      * initialises, so a game already running must be relaunched once after the HUD starts.
      */
     private suspend fun maybeInjectForeground() {
-        val out = rootShell.exec(
+        val out = rootManager.executeCommand(
             "dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' " +
                 "| grep -oE '[a-zA-Z0-9._]+/[a-zA-Z0-9._]+' | head -n1 | cut -d/ -f1",
         )
