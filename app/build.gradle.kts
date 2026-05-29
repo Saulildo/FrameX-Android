@@ -46,7 +46,6 @@ android {
 
     buildFeatures {
         compose = true
-        aidl = true
     }
 
     compileOptions {
@@ -83,10 +82,6 @@ dependencies {
     
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-    
-    // Shizuku
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
 
     // Google Fonts
     implementation("androidx.compose.ui:ui-text-google-fonts:1.6.1")

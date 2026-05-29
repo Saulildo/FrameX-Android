@@ -1,5 +1,7 @@
 package com.framex.app.hud
 
+import com.framex.app.core.root.RootManager
+
 /**
  * The full expanded snapshot pushed to the HUD each cycle. Combines:
  *  - device/display/memory/thermal facts gathered over root (`dumpsys`, `/proc/meminfo`), and
@@ -42,7 +44,7 @@ data class HudTelemetry(
  *
  * Fast values pass through a light EMA so the readout is smooth but low-latency.
  */
-class HudTelemetryCollector(private val shell: RootShell) {
+class HudTelemetryCollector(private val root: RootManager) {
 
     // Cached "slow" fields.
     private var cachedDevice = "Android"
@@ -74,8 +76,8 @@ class HudTelemetryCollector(private val shell: RootShell) {
         val includeSlow = (tick % SLOW_EVERY == 0L)
         tick++
 
-        val raw = shell.exec(buildScript(includeSlow, includeFpsFallback = !haveLayer))
-        if (raw.isBlank() && !shell.isAlive) return null
+        val raw = root.executeCommand(buildScript(includeSlow, includeFpsFallback = !haveLayer))
+        if (raw.isBlank() && !root.isAlive) return null
 
         val sections = splitSections(raw)
 

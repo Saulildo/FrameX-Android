@@ -1,4 +1,4 @@
-package com.framex.app.hud
+package com.framex.app.core.root
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
@@ -11,19 +11,19 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 
 /**
- * A persistent root (su) shell.
+ * A persistent root (`su`) shell — the single privileged-command primitive for the whole app.
  *
- * Why persistent: spawning a fresh `su -c "<cmd>"` process for every telemetry poll is
- * expensive (process fork + SELinux transition + Magisk/SuperSU audit logging on every call).
- * At a 500ms cadence that produces visible jank and log spam. Instead we open ONE long-lived
- * `su` process, keep its stdin/stdout pipes open, and stream commands into it. Each command is
+ * Why persistent: spawning a fresh `su -c "<cmd>"` process for every call is expensive (process
+ * fork + SELinux transition + Magisk/SuperSU audit logging each time). For the HUD's sub-second
+ * telemetry cadence that means visible jank and log spam. Instead we open ONE long-lived `su`
+ * process, keep its stdin/stdout pipes open, and stream commands into it. Each command is
  * terminated by an `echo <unique-marker>` so we know exactly where its output ends.
  *
  * Thread-safety: a [Mutex] serializes commands so two coroutines never interleave their writes
  * into the single shell. All blocking I/O runs on [Dispatchers.IO].
  *
- * The HUD telemetry is a pure-root pipeline: it needs genuine uid 0 for SurfaceFlinger present
- * timestamps, `dumpsys`, `wm size`, and per-app `gfxinfo`, so it always uses real `su`.
+ * Prefer using the injected [RootManager] singleton rather than constructing this directly, so the
+ * whole app shares one `su` session.
  */
 class RootShell {
 
@@ -38,7 +38,7 @@ class RootShell {
         get() = process?.isAlive == true
 
     /**
-     * Opens the su shell (if not already open) and verifies we actually got uid 0.
+     * Opens the `su` shell (if not already open) and verifies we actually got uid 0.
      * On a Magisk/SuperSU device this is where the grant dialog appears on first launch;
      * the call blocks on [Dispatchers.IO] until the user responds.
      *
@@ -120,7 +120,7 @@ class RootShell {
     private fun execLocked(command: String): String {
         val w = writer ?: return ""
         val r = reader ?: return ""
-        val marker = "__FRAMEX_HUD_EOF_${System.nanoTime()}__"
+        val marker = "__FRAMEX_EOF_${System.nanoTime()}__"
         return try {
             w.write(command)
             w.write("\n")

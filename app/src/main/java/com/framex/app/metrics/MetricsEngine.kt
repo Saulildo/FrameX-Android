@@ -62,7 +62,7 @@ class MetricsEngine @Inject constructor(
         }
 
         // All other monitors only run while their module toggle is enabled by the user.
-        // This means zero polling happens for disabled modules — no wasted CPU, battery, or Shizuku calls.
+        // This means zero polling happens for disabled modules — no wasted CPU, battery, or root calls.
         engineScope.launch {
             settingsRepository.enabledModules.collect { enabled ->
                 toggleModule("cpu", enabled) {

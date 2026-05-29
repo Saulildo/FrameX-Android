@@ -44,7 +44,7 @@ class OnboardingViewModel @Inject constructor(
 val OnboardingPages = listOf(
     Pair("FPS-First Philosophy", "FrameX prioritizes frame rates above all else. Experience a modular system designed to keep your workflow at maximum refresh rates."),
     Pair("Real-time Metrics", "Monitor your device's core vitals including CPU, RAM, and GPU workloads in a single glance without leaving your game."),
-    Pair("Powered by Shizuku", "Advanced system-level privileges allow FrameX to gather deeper Android telemetry without touching root or voiding your warranty.")
+    Pair("Powered by Root", "Superuser access lets FrameX read deep system telemetry and hook the GPU/Vulkan pipeline for true per-frame timings.")
 )
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -103,7 +103,7 @@ fun OnboardingScreen(
                     when (page) {
                         0 -> androidx.compose.foundation.Image(painter = androidx.compose.ui.res.painterResource(id = com.framex.app.R.drawable.img_onboarding_fps), contentDescription = null, modifier = Modifier.fillMaxSize())
                         1 -> androidx.compose.foundation.Image(painter = androidx.compose.ui.res.painterResource(id = com.framex.app.R.drawable.img_onboarding_metrics), contentDescription = null, modifier = Modifier.fillMaxSize())
-                        2 -> androidx.compose.foundation.Image(painter = androidx.compose.ui.res.painterResource(id = com.framex.app.R.drawable.img_onboarding_shizuku), contentDescription = null, modifier = Modifier.fillMaxSize())
+                        2 -> androidx.compose.foundation.Image(painter = androidx.compose.ui.res.painterResource(id = com.framex.app.R.drawable.img_onboarding_root), contentDescription = null, modifier = Modifier.fillMaxSize())
                     }
                 }
                 

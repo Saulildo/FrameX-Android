@@ -55,13 +55,13 @@ All user preferences (overlay position, appearance settings, enabled metrics, an
 
 ---
 
-## Shizuku
+## Root Access
 
-FrameX uses the [Shizuku API](https://github.com/RikkaApps/Shizuku) to access system telemetry (frame timing, CPU frequency, RAM) without requiring root. Shizuku is a separate application developed by RikkaApps.
+FrameX is a root application. It runs a local `su` (superuser) shell to read system telemetry (frame timing, CPU frequency, RAM, thermal state) and to inject its own Vulkan/OpenGL instrumentation layer into the game you are profiling.
 
-- FrameX does not transmit data via Shizuku
-- FrameX is not affiliated with Shizuku or RikkaApps
-- Shizuku's own privacy practices are governed by its [documentation](https://github.com/RikkaApps/Shizuku)
+- All root commands execute **locally on your device**; FrameX transmits nothing
+- FrameX requests superuser access via your root manager (e.g. Magisk / KernelSU); you may revoke it at any time
+- The GPU instrumentation layer runs only inside apps you actively profile and is removed when the HUD stops
 
 ---
 

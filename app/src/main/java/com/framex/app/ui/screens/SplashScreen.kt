@@ -87,7 +87,7 @@ fun SplashScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "Powered by Shizuku",
+                text = "Powered by Root",
                 color = Color.White.copy(alpha = 0.6f),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Light,

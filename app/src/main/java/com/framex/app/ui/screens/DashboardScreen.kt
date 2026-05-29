@@ -64,8 +64,7 @@ fun DashboardScreen(
     viewModel: PermissionsViewModel = androidx.hilt.navigation.compose.hiltViewModel(),
     dashboardViewModel: DashboardViewModel = androidx.hilt.navigation.compose.hiltViewModel()
 ) {
-    val isShizukuAvailable by viewModel.isShizukuAvailable.collectAsState()
-    val hasShizukuPermission by viewModel.hasShizukuPermission.collectAsState()
+    val isRootAvailable by viewModel.isRootAvailable.collectAsState()
     val isOverlayRunning by OverlayService.isRunning.collectAsState()
     val fpsHistory by dashboardViewModel.fpsHistory.collectAsState()
     val context = LocalContext.current
@@ -82,8 +81,8 @@ fun DashboardScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    // All three must be true before the overlay can be started.
-    val allPermissionsReady = hasOverlayPermission && isShizukuAvailable && hasShizukuPermission
+    // Both must be true before the overlay can be started.
+    val allPermissionsReady = hasOverlayPermission && isRootAvailable
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -266,8 +265,7 @@ fun DashboardScreen(
                         // One or more required permissions are missing — guide the user to fix them.
                         val missing = buildList {
                             if (!hasOverlayPermission) add("Overlay permission")
-                            if (!isShizukuAvailable) add("Shizuku service")
-                            if (!hasShizukuPermission) add("Shizuku permission")
+                            if (!isRootAvailable) add("Root access")
                         }
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
@@ -329,15 +327,14 @@ fun DashboardScreen(
                     modifier = Modifier.weight(1f),
                     icon = { Icon(Icons.Default.Bolt, null) }
                 )
-                val isShizukuReady = isShizukuAvailable && hasShizukuPermission
                 QuickActionButton(
-                    title = "Shizuku",
-                    subtitle = if (isShizukuReady) "Service Connected" else "Not Running/Granted",
-                    iconContainerColor = if (isShizukuReady) Color(0xFF3B82F6).copy(alpha = 0.1f) else Color.Red.copy(0.1f),
-                    iconContentColor = if (isShizukuReady) Color(0xFF60A5FA) else Color.Red,
+                    title = "Root",
+                    subtitle = if (isRootAvailable) "Access Granted" else "Not Granted",
+                    iconContainerColor = if (isRootAvailable) Color(0xFF3B82F6).copy(alpha = 0.1f) else Color.Red.copy(0.1f),
+                    iconContentColor = if (isRootAvailable) Color(0xFF60A5FA) else Color.Red,
                     onClick = onNavigateToPermissions,
                     modifier = Modifier.weight(1f),
-                    icon = { Text("ADB", color = if (isShizukuReady) Color(0xFF60A5FA) else Color.Red, fontWeight = FontWeight.Bold) }
+                    icon = { Text("su", color = if (isRootAvailable) Color(0xFF60A5FA) else Color.Red, fontWeight = FontWeight.Bold) }
                 )
             }
 

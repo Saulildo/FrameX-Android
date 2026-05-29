@@ -1,8 +1,8 @@
 package com.framex.app
 
 import android.app.Application
+import com.framex.app.core.root.RootManager
 import com.framex.app.gaming.GamingModeEngine
-import com.framex.app.shizuku.ShizukuManager
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
@@ -10,14 +10,15 @@ import javax.inject.Inject
 class FrameXApplication : Application() {
 
     @Inject
-    lateinit var shizukuManager: ShizukuManager
+    lateinit var rootManager: RootManager
 
     @Inject
     lateinit var gamingModeEngine: GamingModeEngine
 
     override fun onCreate() {
         super.onCreate()
-        shizukuManager.init()
+        // Probe root once at startup. On Magisk the grant is remembered after the first prompt.
+        rootManager.init()
         // Recover gaming mode state if the process was killed while mode was active.
         gamingModeEngine.recoverPersistedState()
     }

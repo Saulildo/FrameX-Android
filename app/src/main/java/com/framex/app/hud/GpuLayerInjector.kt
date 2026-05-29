@@ -1,6 +1,7 @@
 package com.framex.app.hud
 
 import android.util.Log
+import com.framex.app.core.root.RootManager
 
 /**
  * Enables/disables injection of the FrameX Vulkan & GLES instrumentation layers into a target
@@ -18,7 +19,7 @@ import android.util.Log
  * start. A game already running must be relaunched (optionally via [enable]'s forceRestart) for
  * the layer to attach.
  */
-class GpuLayerInjector(private val shell: RootShell) {
+class GpuLayerInjector(private val root: RootManager) {
 
     @Volatile
     private var injectedPackage: String? = null
@@ -31,7 +32,7 @@ class GpuLayerInjector(private val shell: RootShell) {
      * @param forceRestart if true, force-stops the target so it relaunches with the layer attached.
      */
     suspend fun enable(targetPackage: String, forceRestart: Boolean = false): Boolean {
-        if (!shell.isAlive) return false
+        if (!root.isRootAvailable.value) return false
         val script = buildString {
             appendLine("settings put global enable_gpu_debug_layers 1")
             appendLine("settings put global gpu_debug_app $targetPackage")
@@ -40,7 +41,7 @@ class GpuLayerInjector(private val shell: RootShell) {
             appendLine("settings put global gpu_debug_layers_gles $GLES_LAYER_SO")
             if (forceRestart) appendLine("am force-stop $targetPackage")
         }
-        shell.exec(script)
+        root.executeCommand(script)
         injectedPackage = targetPackage
         Log.i(TAG, "GPU layer injection enabled for $targetPackage (restart=$forceRestart)")
         return true
@@ -48,11 +49,11 @@ class GpuLayerInjector(private val shell: RootShell) {
 
     /** Clears all GPU debug layer settings so no further apps are instrumented. */
     suspend fun disable() {
-        if (!shell.isAlive) {
+        if (!root.isAlive) {
             injectedPackage = null
             return
         }
-        shell.exec(
+        root.executeCommand(
             buildString {
                 appendLine("settings delete global gpu_debug_layers")
                 appendLine("settings delete global gpu_debug_layers_gles")
@@ -71,8 +72,8 @@ class GpuLayerInjector(private val shell: RootShell) {
      * the session, so it is off by default and the UI should warn before using it.
      */
     suspend fun setSelinuxPermissive(permissive: Boolean) {
-        if (!shell.isAlive) return
-        shell.exec(if (permissive) "setenforce 0" else "setenforce 1")
+        if (!root.isAlive) return
+        root.executeCommand(if (permissive) "setenforce 0" else "setenforce 1")
         Log.w(TAG, "SELinux set to ${if (permissive) "permissive" else "enforcing"}")
     }
 

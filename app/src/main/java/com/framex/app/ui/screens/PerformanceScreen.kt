@@ -44,7 +44,7 @@ import com.framex.app.gaming.GamingModeEngine
 import com.framex.app.gaming.GamingModeService
 import com.framex.app.gaming.GamingModeState
 import com.framex.app.repository.SettingsRepository
-import com.framex.app.shizuku.ShizukuManager
+import com.framex.app.core.root.RootManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -63,18 +63,20 @@ import javax.inject.Inject
 class PerformanceViewModel @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val gamingModeEngine: GamingModeEngine,
-    private val shizukuManager: ShizukuManager,
+    private val rootManager: RootManager,
     private val settingsRepository: SettingsRepository
 ) : ViewModel() {
 
     val gamingModeState = gamingModeEngine.state
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), GamingModeState.Idle)
 
-    val isShizukuAvailable = shizukuManager.isShizukuAvailable
+    val isRootAvailable = rootManager.isRootAvailable
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
-    val hasShizukuPermission = shizukuManager.hasPermission
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    /** Triggers the su grant prompt (or re-verifies an existing grant). */
+    fun requestRoot() {
+        viewModelScope.launch { rootManager.refresh() }
+    }
 
     val whitelist = settingsRepository.gamingModeWhitelist
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
@@ -253,8 +255,7 @@ fun PerformanceScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val gamingState by viewModel.gamingModeState.collectAsState()
-    val isShizukuAvailable by viewModel.isShizukuAvailable.collectAsState()
-    val hasShizukuPermission by viewModel.hasShizukuPermission.collectAsState()
+    val isRootAvailable by viewModel.isRootAvailable.collectAsState()
     val whitelist by viewModel.whitelist.collectAsState()
     val userApps by viewModel.userApps.collectAsState()
     val googleApps by viewModel.googleApps.collectAsState()
@@ -284,8 +285,8 @@ fun PerformanceScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val shizukuReady = isShizukuAvailable && hasShizukuPermission
-    val canActivate = shizukuReady
+    val rootReady = isRootAvailable
+    val canActivate = rootReady
 
     val isActive = gamingState is GamingModeState.Active
     val isBusy = gamingState is GamingModeState.Enabling || gamingState is GamingModeState.Disabling
@@ -580,19 +581,12 @@ fun PerformanceScreen(
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         RequirementRow(
-                            label = "Shizuku Service",
-                            description = if (shizukuReady) "Connected — ADB shell is available"
-                                          else if (isShizukuAvailable) "Running but permission not granted"
-                                          else "Shizuku not running",
-                            satisfied = shizukuReady,
-                            onAction = if (!shizukuReady) ({
-                                context.startActivity(
-                                    context.packageManager
-                                        .getLaunchIntentForPackage("moe.shizuku.privileged.api")
-                                        ?: Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                                )
-                            }) else null,
-                            actionLabel = if (isShizukuAvailable) "Grant" else "Open"
+                            label = "Root Access",
+                            description = if (rootReady) "Granted — su shell is available"
+                                          else "Superuser (su) access required",
+                            satisfied = rootReady,
+                            onAction = if (!rootReady) ({ viewModel.requestRoot() }) else null,
+                            actionLabel = "Grant"
                         )
                         HorizontalDivider(color = Color.White.copy(0.04f))
                         RequirementRow(
@@ -644,7 +638,7 @@ fun PerformanceScreen(
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     "Apps switched ON will NOT be killed or restricted when Gaming Mode activates. " +
-                        "Shizuku and FrameX are always protected.",
+                        "FrameX is always protected.",
                     color = Color.Gray,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(start = 4.dp, bottom = 10.dp)
