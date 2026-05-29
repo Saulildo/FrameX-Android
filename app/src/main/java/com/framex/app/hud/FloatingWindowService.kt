@@ -30,21 +30,27 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONObject
 import kotlin.math.abs
 
 /**
- * Floating Performance HUD — a 1:1 replica of Apple's Metal Performance HUD rendered as a
+ * Floating Performance HUD — an expanded replica of Apple's Metal Performance HUD rendered as a
  * transparent, draggable system overlay.
  *
  * Responsibilities:
  *  - Hosts a transparent [WebView] (loading `assets/hud.html`) in a `TYPE_APPLICATION_OVERLAY`
  *    window so it floats above games/apps.
  *  - Runs as a foreground service (CPU/process kept alive while the HUD is shown).
- *  - Spins up a persistent root shell ([RootShell]) and a [HudTelemetryCollector], then pushes
- *    fresh telemetry into the WebView by calling the page's `updateHudData(...)` every 500ms.
+ *  - Runs a [HudIpcServer] that receives per-frame GPU/encoder timings from the injected
+ *    Vulkan/GLES layers, and a [GpuLayerInjector] (root) that points those layers at the
+ *    foreground game.
+ *  - Merges layer timings with root-gathered device facts via [HudTelemetryCollector] and pushes
+ *    the combined JSON into the WebView (`updateHudData`) every [POLL_INTERVAL_MS].
  *
  * Start it with [start] (it checks the overlay permission) and stop with [stop].
  */
@@ -60,6 +66,11 @@ class FloatingWindowService : Service() {
 
     private val rootShell = RootShell()
     private val collector = HudTelemetryCollector(rootShell)
+    private val ipcServer = HudIpcServer()
+    private val injector = GpuLayerInjector(rootShell)
+
+    /** Foreground package we last enabled GPU-layer injection for (avoids redundant re-applies). */
+    @Volatile private var lastInjected: String? = null
 
     /** Set true once hud.html finishes loading; gates the first JS push. */
     @Volatile private var pageReady = false
@@ -92,8 +103,12 @@ class FloatingWindowService : Service() {
         super.onDestroy()
         _isRunning.value = false
         telemetryJob?.cancel()
-        serviceScope.cancel()
+        ipcServer.close()
+        // Best-effort: clear the global GPU-debug-layer settings so we stop instrumenting games
+        // once the HUD is gone. Bounded so teardown never hangs.
+        runCatching { runBlocking { withTimeoutOrNull(1000) { injector.disable() } } }
         rootShell.close()
+        serviceScope.cancel()
         removeOverlay()
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
@@ -228,53 +243,79 @@ class FloatingWindowService : Service() {
     // --- telemetry loop + JS bridge ----------------------------------------
 
     /**
-     * The bridge. Opens the root shell once, then samples telemetry and pushes it into the
-     * WebView every [POLL_INTERVAL_MS]. Sampling runs on IO; the `evaluateJavascript` call is
-     * marshalled back onto the WebView's (main) thread via [WebView.post].
+     * The bridge. Starts the IPC server (receives per-frame layer packets), opens the root shell,
+     * keeps GPU-layer injection pointed at the foreground game, samples the merged telemetry, and
+     * pushes it into the WebView every [POLL_INTERVAL_MS].
      */
     private fun startTelemetryLoop() {
+        ipcServer.start()
         telemetryJob = serviceScope.launch(Dispatchers.IO) {
             val rooted = rootShell.init()
             if (!rooted) {
-                Log.w(TAG, "Root not available — HUD will keep showing placeholder values.")
+                Log.w(TAG, "Root unavailable — GPU instrumentation + system metrics disabled.")
             }
+            var i = 0L
             while (isActive) {
-                val telemetry = runCatching { collector.sample() }.getOrNull()
-                if (telemetry != null && pageReady) {
-                    pushToWebView(telemetry)
+                // Periodically (re)point GPU-layer injection at the current foreground game.
+                if (rooted && i % FOREGROUND_CHECK_EVERY == 0L) {
+                    runCatching { maybeInjectForeground() }
                 }
+                i++
+
+                // Use the layer's latest frame only if it's fresh (a game is actually instrumented).
+                val gpu = if (ipcServer.isReceiving) ipcServer.latest.value else null
+                val telemetry = runCatching { collector.sample(gpu) }.getOrNull()
+                if (telemetry != null && pageReady) pushToWebView(telemetry)
+
                 delay(POLL_INTERVAL_MS)
             }
         }
     }
 
+    /**
+     * Resolves the foreground package and enables layer injection for it (no force-restart, so we
+     * never kill a running game). Note: the layer attaches when the target's graphics API next
+     * initialises, so a game already running must be relaunched once after the HUD starts.
+     */
+    private suspend fun maybeInjectForeground() {
+        val out = rootShell.exec(
+            "dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' " +
+                "| grep -oE '[a-zA-Z0-9._]+/[a-zA-Z0-9._]+' | head -n1 | cut -d/ -f1",
+        )
+        val pkg = out.trim().lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() } ?: return
+        if (pkg == OUR_PACKAGE || pkg == lastInjected) return
+        lastInjected = pkg
+        injector.enable(pkg, forceRestart = false)
+    }
+
     private fun pushToWebView(t: HudTelemetry) {
-        // Build the exact JS call the page exposes:
-        //   updateHudData(device, res, hz, fps, pre, gpu, mem, maxMem)
-        val device = jsString(t.device)
-        val res = jsString(t.res)
-        val js = "updateHudData($device, $res, ${t.hz}, " +
-            "${fmt(t.fps)}, ${fmt(t.preMs)}, ${fmt(t.gpuMs)}, " +
-            "${fmt(t.memUsedGb)}, ${fmt(t.memMaxMb)});"
-
-        webView?.post {
-            runCatching { webView?.evaluateJavascript(js, null) }
+        // A single JSON object keeps the (large) field set maintainable on both sides.
+        val json = JSONObject().apply {
+            put("device", t.device)
+            put("resolution", t.resolution)
+            put("scale", t.scale)
+            put("hz", t.hz)
+            put("thermal", t.thermal)
+            put("api", t.api)
+            put("fps", round2(t.fps))
+            put("gpuMs", round2(t.gpuMs))
+            put("presentDelayMs", round2(t.presentDelayMs))
+            put("frameIntervalMs", round2(t.frameIntervalMs))
+            put("cmdBufferCpuMs", round2(t.cmdBufferCpuMs))
+            put("renderEncoderCpuMs", round2(t.renderEncoderCpuMs))
+            put("computeEncoderCpuMs", round2(t.computeEncoderCpuMs))
+            put("blitEncoderMs", round2(t.blitEncoderMs))
+            put("memUsedGb", round2(t.memUsedGb))
+            put("memTotalMb", round2(t.memTotalMb))
+            put("memAvailMb", round2(t.memAvailMb))
         }
+        val js = "updateHudData($json)"
+        webView?.post { runCatching { webView?.evaluateJavascript(js, null) } }
     }
 
-    /** Safely render a Double for embedding in JS (no locale commas, finite only). */
-    private fun fmt(v: Double): String =
-        if (v.isFinite()) String.format(java.util.Locale.US, "%.2f", v) else "0"
-
-    /** Quote + escape a string for a JS argument. */
-    private fun jsString(s: String): String {
-        val escaped = s
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace("\n", " ")
-            .replace("\r", " ")
-        return "'$escaped'"
-    }
+    /** Round to 2 decimals; non-finite -> -1 (the JS renders any negative value as "—"). */
+    private fun round2(v: Double): Double =
+        if (v.isFinite()) Math.round(v * 100.0) / 100.0 else -1.0
 
     // --- foreground service plumbing ---------------------------------------
 
@@ -329,6 +370,10 @@ class FloatingWindowService : Service() {
         // HudTelemetryCollector are wider than this, so values stay smooth despite frequent pushes.
         private const val POLL_INTERVAL_MS = 250L
         private const val TOUCH_SLOP = 8f
+
+        // Re-check the foreground app for GPU-layer injection every N polls (~2s at 250ms).
+        private const val FOREGROUND_CHECK_EVERY = 8L
+        private const val OUR_PACKAGE = "com.framex.app"
 
         private const val KEY_HUD_X = "hud_x"
         private const val KEY_HUD_Y = "hud_y"

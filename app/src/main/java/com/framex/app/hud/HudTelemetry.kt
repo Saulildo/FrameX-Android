@@ -1,80 +1,80 @@
 package com.framex.app.hud
 
-import android.util.Log
-
 /**
- * One snapshot of everything the HUD needs. Maps 1:1 onto the JS contract:
- * `updateHudData(device, res, hz, fps, pre, gpu, mem, maxMem)`.
+ * The full expanded snapshot pushed to the HUD each cycle. Combines:
+ *  - device/display/memory/thermal facts gathered over root (`dumpsys`, `/proc/meminfo`), and
+ *  - per-frame GPU/CPU timings streamed from the injected Vulkan/GLES layer ([GpuFrameStats]).
  *
- * @param device    product model, e.g. "Pixel 8 Pro"
- * @param res       active resolution, e.g. "1080x2400"
- * @param hz        active display refresh rate (Hz)
- * @param fps       presented frames per second (SurfaceFlinger present timestamps)
- * @param preMs     CPU render time per frame in ms ("Pre" = CPU work up to buffer swap)
- * @param gpuMs     GPU render time per frame in ms (GpuCompleted - SwapBuffers)
- * @param memUsedGb system RAM in use, in GB (MemTotal - MemAvailable)
- * @param memMaxMb  total system RAM, in MB (the ceiling shown in the green bracket)
+ * Times are in milliseconds. A value < 0 means "not applicable" (e.g. GLES has no encoder split)
+ * and the UI renders it as "—".
  */
 data class HudTelemetry(
     val device: String,
-    val res: String,
+    val resolution: String,
+    val scale: String,
     val hz: Int,
+    val thermal: String,            // "Nominal" / "Fair" / "Severe"
+    val api: String,                // "Vulkan" / "OpenGL" / "—" (no layer attached)
     val fps: Double,
-    val preMs: Double,
     val gpuMs: Double,
+    val presentDelayMs: Double,
+    val frameIntervalMs: Double,
+    val cmdBufferCpuMs: Double,
+    val renderEncoderCpuMs: Double,
+    val computeEncoderCpuMs: Double,
+    val blitEncoderMs: Double,
     val memUsedGb: Double,
-    val memMaxMb: Double,
+    val memTotalMb: Double,
+    val memAvailMb: Double,
 )
 
 /**
- * Collects real device telemetry through a [RootShell], tuned for Metal-HUD-grade accuracy:
- * presentation-accurate FPS, a CPU/GPU per-frame split, low latency, and smooth output.
+ * Builds [HudTelemetry] by merging root-gathered device facts with the injected layer's per-frame
+ * timings.
  *
- * ### Where each number comes from
- * - **FPS / frametime** → `dumpsys SurfaceFlinger --latency <layer>`. These are the timestamps
- *   of frames *actually presented to the display*, so the rate matches what the eye sees. Unlike
- *   per-app `gfxinfo`, this also works for games that render through SurfaceView / GL / Vulkan
- *   (which bypass HWUI entirely). FPS is computed over a sliding ~1s window of the most recent
- *   present timestamps, giving low delay without single-frame jitter.
- * - **Pre (CPU) / GPU** → `dumpsys gfxinfo <pkg> framestats`. HWUI reports per-frame nanosecond
- *   stamps for the CPU pipeline (DrawStart…SwapBuffers) and GPU completion. We take the *median*
- *   over the last interval (robust to one-off spikes) and reset the buffer each poll so the
- *   sample only reflects recent frames. (gfxinfo is empty for pure-GL/Vulkan games; in that case
- *   Pre/GPU hold their last value — Android exposes no per-app GPU timing for those without a
- *   dedicated profiler.)
- * - **Mem** → `/proc/meminfo` (MemTotal − MemAvailable). **Device / Res / Hz** → cached and
- *   refreshed only every few seconds since they change rarely.
+ * - **GPU ms / present delay / frame interval / encoder CPU times** come from the layer
+ *   ([GpuFrameStats]) — there is no other way to see inside Vulkan/GLES.
+ * - **FPS** is derived from the layer's frame interval (1000 / interval) when a layer is attached;
+ *   otherwise it falls back to SurfaceFlinger present timestamps so the HUD still shows a real
+ *   frame rate for un-instrumented apps.
+ * - **Resolution / refresh rate / device / memory / thermal** come from root and are cached
+ *   (refreshed every few seconds) since they change slowly.
  *
- * ### Smoothing
- * Fast values pass through a light EMA so the readout is steady but still tracks changes within
- * a frame or two. Slow/static fields are cached so a transient parse miss never blanks them.
+ * Fast values pass through a light EMA so the readout is smooth but low-latency.
  */
 class HudTelemetryCollector(private val shell: RootShell) {
 
-    // Cached "slow" fields - they rarely (or never) change during a session.
+    // Cached "slow" fields.
     private var cachedDevice = "Android"
     private var cachedRes = "0x0"
     private var cachedHz = 60
-    private var cachedMemMaxMb = 0.0
+    private var cachedThermal = "Nominal"
+    private var cachedMemTotalMb = 0.0
 
-    // Smoothed/last-known fast fields so a frame with no new data holds steady instead of flashing 0.
+    // Smoothed / last-known fast fields.
     private var smoothFps = 0.0
-    private var smoothPre = 0.0
     private var smoothGpu = 0.0
+    private var smoothPresent = 0.0
+    private var smoothInterval = 0.0
+    private var smoothCmd = 0.0
+    private var smoothRender = 0.0
+    private var smoothCompute = 0.0
+    private var smoothBlit = 0.0
     private var lastMemUsedGb = 0.0
+    private var lastMemAvailMb = 0.0
 
     private var tick = 0L
 
     /**
-     * Runs one batched sample. Returns null only if root is completely unavailable;
-     * otherwise returns a fully-populated snapshot (using cached/last-known values for any
-     * section that produced no fresh data this cycle).
+     * Runs one sample. [gpu] is the most recent frame from the injected layer, or null if no layer
+     * is attached / its data is stale (in which case FPS falls back to SurfaceFlinger).
      */
-    suspend fun sample(): HudTelemetry? {
+    suspend fun sample(gpu: GpuFrameStats?): HudTelemetry? {
+        val haveLayer = gpu != null
         val includeSlow = (tick % SLOW_EVERY == 0L)
         tick++
 
-        val raw = shell.exec(buildScript(includeSlow))
+        val raw = shell.exec(buildScript(includeSlow, includeFpsFallback = !haveLayer))
         if (raw.isBlank() && !shell.isAlive) return null
 
         val sections = splitSections(raw)
@@ -83,48 +83,66 @@ class HudTelemetryCollector(private val shell: RootShell) {
             parseDevice(sections[SEC_MODEL])?.let { cachedDevice = it }
             parseResolution(sections[SEC_SIZE])?.let { cachedRes = it }
             parseHz(sections[SEC_DISPLAY])?.let { cachedHz = it }
+            parseThermal(sections[SEC_THERMAL])?.let { cachedThermal = it }
         }
 
-        parseMeminfo(sections[SEC_MEM])?.let { (usedGb, totalMb) ->
+        parseMeminfo(sections[SEC_MEM])?.let { (usedGb, totalMb, availMb) ->
             lastMemUsedGb = usedGb
-            cachedMemMaxMb = totalMb
+            cachedMemTotalMb = totalMb
+            lastMemAvailMb = availMb
         }
 
-        // FPS: prefer presentation timestamps; fall back to gfxinfo's own frame rate if the
-        // SurfaceFlinger layer reported nothing (e.g. layer name mismatch on some ROMs).
-        val frames = parseFrameStats(sections[SEC_GFX])
-        val presentFps = parseLatencyFps(sections[SEC_LATENCY])
-        val freshFps = presentFps ?: frames?.fpsFallback
-
-        if (freshFps != null && freshFps > 0.0) {
-            smoothFps = ema(smoothFps, freshFps, FPS_ALPHA)
-        }
-        if (frames != null) {
-            smoothPre = ema(smoothPre, frames.preMs, TIMING_ALPHA)
-            smoothGpu = ema(smoothGpu, frames.gpuMs, TIMING_ALPHA)
+        val api: String
+        if (haveLayer) {
+            api = gpu!!.api
+            val layerFps = if (gpu.frameIntervalMs > 0.0) 1000.0 / gpu.frameIntervalMs else 0.0
+            if (layerFps > 0.0) smoothFps = ema(smoothFps, layerFps, FPS_ALPHA)
+            smoothGpu = emaSigned(smoothGpu, gpu.gpuMs)
+            smoothPresent = emaSigned(smoothPresent, gpu.presentDelayMs)
+            smoothInterval = emaSigned(smoothInterval, gpu.frameIntervalMs)
+            smoothCmd = emaSigned(smoothCmd, gpu.cmdBufferCpuMs)
+            smoothRender = emaSigned(smoothRender, gpu.renderEncoderCpuMs)
+            smoothCompute = emaSigned(smoothCompute, gpu.computeEncoderCpuMs)
+            smoothBlit = emaSigned(smoothBlit, gpu.blitEncoderMs)
+        } else {
+            api = "—"
+            parseLatencyFps(sections[SEC_LATENCY])?.let { fps ->
+                if (fps > 0.0) smoothFps = ema(smoothFps, fps, FPS_ALPHA)
+            }
+            // No layer => no GPU/encoder visibility.
+            smoothGpu = -1.0
+            smoothPresent = -1.0
+            smoothCmd = -1.0
+            smoothRender = -1.0
+            smoothCompute = -1.0
+            smoothBlit = -1.0
+            smoothInterval = if (smoothFps > 0) 1000.0 / smoothFps else 0.0
         }
 
         return HudTelemetry(
             device = cachedDevice,
-            res = cachedRes,
+            resolution = cachedRes,
+            scale = "1.0x Direct",
             hz = cachedHz,
+            thermal = cachedThermal,
+            api = api,
             fps = smoothFps,
-            preMs = smoothPre,
             gpuMs = smoothGpu,
+            presentDelayMs = smoothPresent,
+            frameIntervalMs = smoothInterval,
+            cmdBufferCpuMs = smoothCmd,
+            renderEncoderCpuMs = smoothRender,
+            computeEncoderCpuMs = smoothCompute,
+            blitEncoderMs = smoothBlit,
             memUsedGb = lastMemUsedGb,
-            memMaxMb = cachedMemMaxMb,
+            memTotalMb = cachedMemTotalMb,
+            memAvailMb = lastMemAvailMb,
         )
     }
 
     // --- batched script -----------------------------------------------------
 
-    /**
-     * Builds the per-poll script. Section markers (`@@FX@@<NAME>`) let us parse one blob in a
-     * single pass / single round-trip. Slow fields are included only every [SLOW_EVERY] ticks to
-     * keep each fast poll cheap (lower delay). The foreground package is resolved inline so the
-     * whole sample stays a single shell invocation.
-     */
-    private fun buildScript(includeSlow: Boolean): String {
+    private fun buildScript(includeSlow: Boolean, includeFpsFallback: Boolean): String {
         val lines = ArrayList<String>()
         if (includeSlow) {
             lines += "echo $MARKER_PREFIX$SEC_MODEL"
@@ -133,25 +151,23 @@ class HudTelemetryCollector(private val shell: RootShell) {
             lines += "wm size"
             lines += "echo $MARKER_PREFIX$SEC_DISPLAY"
             lines += "dumpsys display | grep -iE 'fps=|refreshrate' | head -n 8"
+            lines += "echo $MARKER_PREFIX$SEC_THERMAL"
+            lines += "dumpsys thermalservice | grep -iE 'Thermal Status' | head -n 1"
         }
         lines += "echo $MARKER_PREFIX$SEC_MEM"
         lines += "grep -E 'MemTotal|MemAvailable' /proc/meminfo"
-        // Foreground package (used for both the SurfaceFlinger layer and gfxinfo).
-        lines += "FX_PKG=\$(dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' " +
-            "| grep -oE '[a-zA-Z0-9._]+/[a-zA-Z0-9._]+' | head -n1 | cut -d/ -f1)"
-        // FPS via presentation timestamps. Pick the presenting layer for the foreground app,
-        // preferring its SurfaceView (games) over the activity window.
-        lines += "echo $MARKER_PREFIX$SEC_LATENCY"
-        lines += "if [ -n \"\$FX_PKG\" ]; then " +
-            "LIST=\$(dumpsys SurfaceFlinger --list 2>/dev/null); " +
-            "LAYER=\$(echo \"\$LIST\" | grep -F \"\$FX_PKG\" | grep -iF SurfaceView | tail -n1); " +
-            "[ -z \"\$LAYER\" ] && LAYER=\$(echo \"\$LIST\" | grep -F \"\$FX_PKG\" | tail -n1); " +
-            "dumpsys SurfaceFlinger --latency \"\$LAYER\" 2>/dev/null; fi"
-        // Pre (CPU) / GPU split via HWUI framestats; reset so the next poll is a fresh window.
-        lines += "echo $MARKER_PREFIX$SEC_GFX"
-        lines += "if [ -n \"\$FX_PKG\" ]; then " +
-            "dumpsys gfxinfo \"\$FX_PKG\" framestats 2>/dev/null; " +
-            "dumpsys gfxinfo \"\$FX_PKG\" reset >/dev/null 2>&1; fi"
+
+        // Only pay for SurfaceFlinger present timestamps when no GPU layer is feeding us FPS.
+        if (includeFpsFallback) {
+            lines += "FX_PKG=\$(dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' " +
+                "| grep -oE '[a-zA-Z0-9._]+/[a-zA-Z0-9._]+' | head -n1 | cut -d/ -f1)"
+            lines += "echo $MARKER_PREFIX$SEC_LATENCY"
+            lines += "if [ -n \"\$FX_PKG\" ]; then " +
+                "LIST=\$(dumpsys SurfaceFlinger --list 2>/dev/null); " +
+                "LAYER=\$(echo \"\$LIST\" | grep -F \"\$FX_PKG\" | grep -iF SurfaceView | tail -n1); " +
+                "[ -z \"\$LAYER\" ] && LAYER=\$(echo \"\$LIST\" | grep -F \"\$FX_PKG\" | tail -n1); " +
+                "dumpsys SurfaceFlinger --latency \"\$LAYER\" 2>/dev/null; fi"
+        }
         return lines.joinToString("\n")
     }
 
@@ -180,7 +196,6 @@ class HudTelemetryCollector(private val shell: RootShell) {
     private fun parseDevice(block: String?): String? =
         block?.lineSequence()?.map { it.trim() }?.firstOrNull { it.isNotEmpty() }
 
-    /** Prefer an "Override size" (the size apps actually render at) over "Physical size". */
     private fun parseResolution(block: String?): String? {
         block ?: return null
         val rx = Regex("(\\d+)x(\\d+)")
@@ -198,11 +213,6 @@ class HudTelemetryCollector(private val shell: RootShell) {
         return override ?: physical
     }
 
-    /**
-     * Pull the active refresh rate out of `dumpsys display`. Different ROMs phrase it as
-     * `fps=120.0`, `refreshRate 120.0`, `mRefreshRate=120.0`, etc. We grab every candidate
-     * float next to one of those tokens and take the max (the active high-refresh mode).
-     */
     private fun parseHz(block: String?): Int? {
         block ?: return null
         val rx = Regex("(?:fps|refreshRate|RefreshRate)\\s*[=: ]\\s*([0-9]+(?:\\.[0-9]+)?)")
@@ -214,8 +224,19 @@ class HudTelemetryCollector(private val shell: RootShell) {
         return if (best > 0) Math.round(best).toInt() else null
     }
 
-    /** @return Pair(usedGb, totalMb) parsed from /proc/meminfo (values are in kB). */
-    private fun parseMeminfo(block: String?): Pair<Double, Double>? {
+    /** Map the numeric PowerManager thermal status (0..6) to the three Metal-HUD-style labels. */
+    private fun parseThermal(block: String?): String? {
+        block ?: return null
+        val m = Regex("Thermal Status\\s*[:=]?\\s*(\\d+)").find(block) ?: return null
+        return when (m.groupValues[1].toIntOrNull() ?: 0) {
+            0 -> "Nominal"
+            1, 2 -> "Fair"
+            else -> "Severe"
+        }
+    }
+
+    /** @return Triple(usedGb, totalMb, availMb) from /proc/meminfo (kB values). */
+    private fun parseMeminfo(block: String?): Triple<Double, Double, Double>? {
         block ?: return null
         var totalKb = 0L
         var availKb = 0L
@@ -226,27 +247,19 @@ class HudTelemetryCollector(private val shell: RootShell) {
         }
         if (totalKb <= 0L) return null
         val usedKb = (totalKb - availKb).coerceAtLeast(0L)
-        return (usedKb / 1024.0 / 1024.0) to (totalKb / 1024.0)
+        return Triple(usedKb / 1024.0 / 1024.0, totalKb / 1024.0, availKb / 1024.0)
     }
 
     /**
-     * FPS from `dumpsys SurfaceFlinger --latency <layer>`.
-     *
-     * Output: line 1 is the refresh period (ns); each following line has three nanosecond
-     * timestamps `desiredPresentTime  actualPresentTime  frameReadyTime`. We use the middle
-     * column (actual present time = when the frame hit the display) — the standard, accurate
-     * basis for on-screen FPS. Rows that are 0 or INT64_MAX (no data / pending) are dropped.
-     *
-     * To stay low-latency yet stable we measure over the most recent [FPS_WINDOW_NS] of present
-     * times: `fps = (frames - 1) / span`.
+     * Fallback FPS from `dumpsys SurfaceFlinger --latency <layer>` (present timestamps, middle
+     * column) over the most recent ~1s window. Used only when no GPU layer is attached.
      */
     private fun parseLatencyFps(block: String?): Double? {
         block ?: return null
         val present = ArrayList<Long>()
         for (line in block.lineSequence()) {
             val toks = line.trim().split(Regex("\\s+"))
-            if (toks.size < 3) continue // skips the refresh-period header line (single token)
-            // A valid frame row is three numeric columns; non-numeric/short lines are headers.
+            if (toks.size < 3) continue
             if (toks[0].toLongOrNull() == null || toks[2].toLongOrNull() == null) continue
             val b = toks[1].toLongOrNull() ?: continue
             if (b <= 0L || b == PENDING) continue
@@ -254,124 +267,39 @@ class HudTelemetryCollector(private val shell: RootShell) {
         }
         if (present.size < 2) return null
         present.sort()
-
         val newest = present.last()
         val cutoff = newest - FPS_WINDOW_NS
         val recent = present.filter { it >= cutoff }
         val use = if (recent.size >= 2) recent else present
-
         val span = use.last() - use.first()
         if (span <= 0L) return null
-        val fps = (use.size - 1) / (span / 1_000_000_000.0)
-        return fps.coerceIn(0.0, 1000.0)
-    }
-
-    private data class FrameAgg(val preMs: Double, val gpuMs: Double, val fpsFallback: Double)
-
-    /**
-     * Parse `gfxinfo <pkg> framestats`. Frame rows live between `---PROFILEDATA---` fences as
-     * comma-separated nanosecond timestamps. Column layout (HWUI):
-     *
-     *   0 Flags  1 IntendedVsync  2 Vsync ... 8 DrawStart ... 11 IssueDrawCommandsStart
-     *   12 SwapBuffers  13 FrameCompleted ... 16 GpuCompleted
-     *
-     *   Pre (CPU) = SwapBuffers   - DrawStart    (record + sync + issue: the CPU's frame work)
-     *   GPU       = GpuCompleted  - SwapBuffers  (GPU execution; falls back to FrameCompleted)
-     *
-     * We use the **median** of each (robust to single-frame spikes) and derive an FPS fallback
-     * from the IntendedVsync span. Rows with non-zero Flags (first-frame / janky) are skipped.
-     */
-    private fun parseFrameStats(block: String?): FrameAgg? {
-        block ?: return null
-
-        val preList = ArrayList<Double>()
-        val gpuList = ArrayList<Double>()
-        var firstVsync = Long.MAX_VALUE
-        var lastVsync = Long.MIN_VALUE
-        var count = 0
-
-        var inProfile = false
-        for (rawLine in block.lineSequence()) {
-            val line = rawLine.trim()
-            if (line.startsWith("---PROFILEDATA")) {
-                inProfile = !inProfile
-                continue
-            }
-            if (!inProfile || line.isEmpty()) continue
-            if (line.startsWith("Flags", ignoreCase = true)) continue // header
-
-            val cols = line.split(",")
-            if (cols.size < 14) continue
-
-            val flags = cols[0].trim().toLongOrNull() ?: continue
-            if (flags != 0L) continue
-
-            val intendedVsync = cols[1].trim().toLongOrNull() ?: continue
-            val drawStart = cols[8].trim().toLongOrNull() ?: continue
-            val swapBuffers = cols[12].trim().toLongOrNull() ?: continue
-            val frameCompleted = cols[13].trim().toLongOrNull() ?: continue
-            val gpuCompleted = cols.getOrNull(16)?.trim()?.toLongOrNull() ?: 0L
-
-            if (swapBuffers <= drawStart || frameCompleted < swapBuffers) continue
-
-            val preNs = swapBuffers - drawStart
-            val gpuNs = if (gpuCompleted > swapBuffers) gpuCompleted - swapBuffers
-            else frameCompleted - swapBuffers
-
-            preList += preNs / 1_000_000.0
-            gpuList += gpuNs / 1_000_000.0
-            count++
-
-            if (intendedVsync < firstVsync) firstVsync = intendedVsync
-            if (intendedVsync > lastVsync) lastVsync = intendedVsync
-        }
-
-        if (count == 0) return null
-
-        val spanSec = (lastVsync - firstVsync) / 1_000_000_000.0
-        val fpsFallback = if (count >= 2 && spanSec > 0) (count - 1) / spanSec else 0.0
-
-        return FrameAgg(
-            preMs = median(preList),
-            gpuMs = median(gpuList),
-            fpsFallback = fpsFallback.coerceIn(0.0, 1000.0),
-        ).also { Log.v(TAG, "gfx frames=$count pre=${it.preMs} gpu=${it.gpuMs}") }
+        return ((use.size - 1) / (span / 1_000_000_000.0)).coerceIn(0.0, 1000.0)
     }
 
     // --- helpers ------------------------------------------------------------
 
-    private fun median(values: List<Double>): Double {
-        if (values.isEmpty()) return 0.0
-        val s = values.sorted()
-        val mid = s.size / 2
-        return if (s.size % 2 == 1) s[mid] else (s[mid - 1] + s[mid]) / 2.0
-    }
-
-    /** Exponential moving average; seeds with the first real value to avoid a slow ramp from 0. */
     private fun ema(prev: Double, next: Double, alpha: Double): Double =
         if (prev <= 0.0) next else alpha * next + (1.0 - alpha) * prev
 
+    /** EMA that preserves the "n/a" (-1) sentinel instead of smoothing toward it. */
+    private fun emaSigned(prev: Double, next: Double): Double {
+        if (next < 0.0) return -1.0
+        return if (prev <= 0.0) next else TIMING_ALPHA * next + (1.0 - TIMING_ALPHA) * prev
+    }
+
     private companion object {
-        const val TAG = "FrameX_HudTelemetry"
         const val MARKER_PREFIX = "@@FX@@"
 
         const val SEC_MODEL = "MODEL"
         const val SEC_SIZE = "SIZE"
         const val SEC_DISPLAY = "DISPLAY"
+        const val SEC_THERMAL = "THERMAL"
         const val SEC_MEM = "MEM"
         const val SEC_LATENCY = "LATENCY"
-        const val SEC_GFX = "GFX"
 
-        // INT64_MAX sentinel SurfaceFlinger uses for pending/unknown present times.
         const val PENDING = Long.MAX_VALUE
-
-        // FPS measured over the most recent 1s of present timestamps: stable but low-delay.
         const val FPS_WINDOW_NS = 1_000_000_000L
-
-        // Refresh static-ish fields (model/res/hz) every N fast polls only.
         const val SLOW_EVERY = 16L
-
-        // Smoothing: FPS tracks faster (less lag), per-frame timings a touch smoother.
         const val FPS_ALPHA = 0.5
         const val TIMING_ALPHA = 0.4
     }
