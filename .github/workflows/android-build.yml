@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          ./gradlew assembleDebug --stacktrace 2>&1 | tee build-output.log
+          ./gradlew assembleDebug --no-daemon 2>&1 | tee build-output.log
           Status=${PIPESTATUS[0]}
           echo "status=$Status" >> "$GITHUB_OUTPUT"
           exit "$Status"
@@ -49,11 +49,14 @@ jobs:
           {
             echo "### Gradle failure"
             echo '```text'
-            tail -n 120 build-output.log
+            sed -n '1,180p' build-output.log
+            echo
+            echo "--- Last 80 lines ---"
+            tail -n 80 build-output.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-          Message=$(tail -n 80 build-output.log | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+          Message=$({ sed -n '1,180p' build-output.log; echo; echo "--- Last 80 lines ---"; tail -n 80 build-output.log; } | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
           echo "::error title=Gradle build failed::$Message"
 
       - name: Upload build log
