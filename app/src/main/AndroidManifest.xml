@@ -52,6 +52,18 @@
             android:stopWithTask="false" />
 
         <!--
+            Floating Performance HUD (Metal HUD replica).
+            Hosts a transparent WebView system overlay (SYSTEM_ALERT_WINDOW) and streams root
+            telemetry into it. mediaPlayback|dataSync is the permission-free FGS type pair already
+            used by the overlay service and keeps the process alive under OEM game-boost managers.
+        -->
+        <service
+            android:name=".hud.FloatingWindowService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback|dataSync"
+            android:stopWithTask="false" />
+
+        <!--
             Gaming Mode foreground service.
             foregroundServiceType="specialUse" is required on Android 14+ (API 34) for services
             that perform aggressive system state management not covered by standard types.

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metal HUD - Exact Replica</title>
+    <style>
+        body {
+            margin: 0;
+            background: rgba(0, 0, 0, 0); /* Modified for Android transparent overlay */
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .hud-container {
+            background-color: rgba(75, 75, 75, 0.6);
+            border-radius: 12px;
+            padding: 12px 14px 10px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        .hud-text {
+            margin: 0;
+            font-family: monospace;
+            font-size: 20px;
+            line-height: 1.25;
+            font-weight: 500;
+            letter-spacing: 0;
+        }
+
+        .c-white  { color: #FFFFFF; }
+        .c-salmon { color: #FF756D; }
+        .c-cyan   { color: #4EB4D8; }
+        .c-green  { color: #64D262; }
+
+        .graph-container {
+            width: 100%;
+            height: 80px;
+            position: relative;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="hud-container">
+<pre class="hud-text" id="hudData">
+<span class="c-white" id="txt-device">Apple M2 Pro       [960x540]</span>
+<span class="c-white" id="txt-display">1.0x Direct            120Hz</span>
+<span class="c-white">FPS:   <span id="val-fps">29.27</span> </span><span class="c-salmon">[ <span id="min-fps">15.00</span> <span id="max-fps">120.00</span>]</span>
+<span class="c-cyan">Pre:   <span id="val-pre">34.17</span> </span><span class="c-salmon">[  <span id="min-pre">8.33</span>  <span id="max-pre">66.67</span>]</span>
+<span class="c-green">GPU:    <span id="val-gpu">0.45</span> </span><span class="c-salmon">[  <span id="min-gpu">0.06</span>   <span id="max-gpu">1.67</span>]</span>
+<span class="c-white">Mem:  <span id="val-mem">0.99GB</span>      </span><span class="c-green">[<span id="max-mem">494.00MB</span>]</span>
+</pre>
+        <div class="graph-container">
+            <canvas id="hudGraph"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('hudGraph');
+        const ctx = canvas.getContext('2d');
+        
+        let preHistory = [];
+        let gpuHistory = [];
+
+        // This function will be called from Android Kotlin
+        function updateHudData(device, res, hz, fps, pre, gpu, mem, maxMem) {
+            document.getElementById('txt-device').innerText = `${device.padEnd(16, ' ')} [${res}]`;
+            document.getElementById('txt-display').innerText = `1.0x Direct            ${hz}Hz`;
+            
+            document.getElementById('val-fps').innerText = fps.toFixed(2).padStart(5, ' ');
+            document.getElementById('val-pre').innerText = pre.toFixed(2).padStart(5, ' ');
+            document.getElementById('val-gpu').innerText = gpu.toFixed(2).padStart(5, ' ');
+            
+            document.getElementById('val-mem').innerText = `${mem.toFixed(2)}GB`;
+            document.getElementById('max-mem').innerText = `${maxMem.toFixed(2)}MB`;
+            
+            updateGraph(pre, gpu);
+        }
+
+        function updateGraph(pre, gpu) {
+            preHistory.push(pre);
+            gpuHistory.push(gpu);
+            if(preHistory.length > 100) preHistory.shift();
+            if(gpuHistory.length > 100) gpuHistory.shift();
+            
+            drawGraph();
+        }
+
+        function drawGraph() {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+
+            const w = rect.width;
+            const h = rect.height;
+
+            ctx.clearRect(0, 0, w, h);
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(0, 0, w, h);
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+            ctx.beginPath();
+            for (let i = 1; i < 10; i++) {
+                const x = (w / 10) * i;
+                ctx.moveTo(Math.floor(x) + 0.5, 0);
+                ctx.lineTo(Math.floor(x) + 0.5, h);
+            }
+            ctx.stroke();
+
+            function drawPath(data, color) {
+                if(data.length === 0) return;
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1.5;
+                ctx.lineJoin = 'round';
+                ctx.beginPath();
+                
+                const maxVal = Math.max(30, ...data); // dynamic scaling
+                
+                for (let i = 0; i < data.length; i++) {
+                    const x = (i / 100) * w;
+                    const y = h - ((data[i] / maxVal) * h);
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            }
+
+            drawPath(preHistory, '#4EB4D8');
+            drawPath(gpuHistory, '#64D262');
+        }
+        
+        window.addEventListener('resize', drawGraph);
+    </script>
+</body>
+</html>
