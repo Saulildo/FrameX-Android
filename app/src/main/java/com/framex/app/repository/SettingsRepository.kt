@@ -24,13 +24,13 @@ class SettingsRepository @Inject constructor(
     )
     val enabledModules: StateFlow<Set<String>> = _enabledModules.asStateFlow()
 
-    private val _overlayOpacity = MutableStateFlow(prefs.getFloat(KEY_OVERLAY_OPACITY, 0.75f))
+    private val _overlayOpacity = MutableStateFlow(prefs.getFloat(KEY_OVERLAY_OPACITY, 0.6f))
     val overlayOpacity: StateFlow<Float> = _overlayOpacity.asStateFlow()
 
     private val _overlayTextSize = MutableStateFlow(prefs.getInt(KEY_OVERLAY_TEXT_SIZE, 1))
     val overlayTextSize: StateFlow<Int> = _overlayTextSize.asStateFlow()
 
-    private val _overlayUseMonospace = MutableStateFlow(prefs.getBoolean(KEY_OVERLAY_USE_MONOSPACE, false))
+    private val _overlayUseMonospace = MutableStateFlow(prefs.getBoolean(KEY_OVERLAY_USE_MONOSPACE, true))
     val overlayUseMonospace: StateFlow<Boolean> = _overlayUseMonospace.asStateFlow()
 
     private val _overlayColorIndex = MutableStateFlow(prefs.getInt(KEY_OVERLAY_COLOR_INDEX, 0))

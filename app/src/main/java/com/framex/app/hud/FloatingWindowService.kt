@@ -82,6 +82,7 @@ class FloatingWindowService : Service() {
 
     /** Set true once hud.html finishes loading; gates the first JS push. */
     @Volatile private var pageReady = false
+    @Volatile private var lastConfigJs: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -161,6 +162,7 @@ class FloatingWindowService : Service() {
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     pageReady = true
+                    pushConfigToWebView()
                 }
             }
             loadUrl("file:///android_asset/hud.html")
@@ -259,12 +261,56 @@ class FloatingWindowService : Service() {
 
     private fun hudWidthPx(): Int {
         val maxWidth = (resources.displayMetrics.widthPixels - dp(8)).coerceAtLeast(dp(260))
-        return dp(HUD_WIDTH_DP).coerceAtMost(maxWidth)
+        return dp(hudSizeDp().first).coerceAtMost(maxWidth)
     }
 
     private fun hudHeightPx(): Int {
         val maxHeight = (resources.displayMetrics.heightPixels - dp(80)).coerceAtLeast(dp(220))
-        return dp(HUD_HEIGHT_DP).coerceAtMost(maxHeight)
+        return dp(hudSizeDp().second).coerceAtMost(maxHeight)
+    }
+
+    private fun hudSizeDp(): Pair<Int, Int> {
+        val textSize = hudTextSize()
+        val extraHeight = when (textSize) {
+            0 -> -8
+            2 -> 12
+            else -> 0
+        }
+        return when (hudMode()) {
+            "Expanded" -> 340 to 226 + extraHeight
+            "Standard" -> 320 to 206 + extraHeight
+            else -> 300 to 190 + extraHeight
+        }
+    }
+
+    private fun hudMode(): String {
+        val value = getSharedPreferences("framex_settings", Context.MODE_PRIVATE)
+            .getString(KEY_HUD_MODE, "Compact") ?: "Compact"
+        return when (value) {
+            "Expanded", "Standard", "Compact" -> value
+            else -> "Compact"
+        }
+    }
+
+    private fun hudTextSize(): Int =
+        getSharedPreferences("framex_settings", Context.MODE_PRIVATE)
+            .getInt(KEY_HUD_TEXT_SIZE_SETTING, 1)
+            .coerceIn(0, 2)
+
+    private fun applyHudLayoutConfig() {
+        val params = layoutParams ?: return
+        val newWidth = hudWidthPx()
+        val newHeight = hudHeightPx()
+        if (params.width == newWidth && params.height == newHeight) return
+        params.width = newWidth
+        params.height = newHeight
+        val maxX = (resources.displayMetrics.widthPixels - newWidth).coerceAtLeast(0)
+        val maxY = (resources.displayMetrics.heightPixels - newHeight).coerceAtLeast(0)
+        params.x = params.x.coerceIn(0, maxX)
+        params.y = params.y.coerceIn(0, maxY)
+        webView?.post {
+            webView?.let { runCatching { windowManager.updateViewLayout(it, params) } }
+        }
     }
 
     private fun removeOverlay() {
@@ -275,6 +321,7 @@ class FloatingWindowService : Service() {
         webView = null
         layoutParams = null
         pageReady = false
+        lastConfigJs = null
     }
 
     // --- telemetry loop + JS bridge ----------------------------------------
@@ -326,6 +373,7 @@ class FloatingWindowService : Service() {
     }
 
     private fun pushToWebView(t: HudTelemetry) {
+        pushConfigToWebView()
         // A single JSON object keeps the (large) field set maintainable on both sides.
         val json = JSONObject().apply {
             put("device", t.device)
@@ -349,6 +397,47 @@ class FloatingWindowService : Service() {
         val js = "updateHudData($json)"
         webView?.post { runCatching { webView?.evaluateJavascript(js, null) } }
     }
+
+    private fun pushConfigToWebView() {
+        applyHudLayoutConfig()
+        val prefs = getSharedPreferences("framex_settings", Context.MODE_PRIVATE)
+        val textSize = hudTextSize()
+        val mode = hudMode()
+        val json = JSONObject().apply {
+            put("opacity", prefs.getFloat(KEY_HUD_OPACITY, 0.6f).coerceIn(0.35f, 0.95f).toDouble())
+            put("fontSizePx", when (textSize) {
+                0 -> 9
+                2 -> 11
+                else -> 10
+            })
+            put("lineHeight", when (textSize) {
+                0 -> 1.06
+                2 -> 1.1
+                else -> 1.08
+            })
+            put("useMonospace", prefs.getBoolean(KEY_HUD_MONOSPACE, true))
+            put("accent", hudAccentColor(prefs.getInt(KEY_HUD_COLOR_INDEX, 0)))
+            put("graphHeightPx", when (mode) {
+                "Expanded" -> 52
+                "Standard" -> 46
+                else -> 42
+            })
+        }
+        val js = "updateHudConfig($json)"
+        if (js == lastConfigJs) return
+        lastConfigJs = js
+        webView?.post { runCatching { webView?.evaluateJavascript(js, null) } }
+    }
+
+    private fun hudAccentColor(index: Int): String =
+        when (index.coerceIn(0, 5)) {
+            1 -> "#4EB4D8"
+            2 -> "#FF756D"
+            3 -> "#E8C45A"
+            4 -> "#A78BFA"
+            5 -> "#FFFFFF"
+            else -> "#64D262"
+        }
 
     /** Round to 2 decimals; non-finite -> -1 (the JS renders any negative value as "—"). */
     private fun round2(v: Double): Double =
@@ -415,8 +504,11 @@ class FloatingWindowService : Service() {
         private const val KEY_HUD_X = "hud_x"
         private const val KEY_HUD_Y = "hud_y"
         private const val KEY_OVERLAY_WAS_RUNNING = "overlay_was_running"
-        private const val HUD_WIDTH_DP = 300
-        private const val HUD_HEIGHT_DP = 190
+        private const val KEY_HUD_MODE = "overlay_mode"
+        private const val KEY_HUD_OPACITY = "overlay_opacity"
+        private const val KEY_HUD_TEXT_SIZE_SETTING = "overlay_text_size"
+        private const val KEY_HUD_MONOSPACE = "overlay_use_monospace"
+        private const val KEY_HUD_COLOR_INDEX = "overlay_color_index"
 
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()

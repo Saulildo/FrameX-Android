@@ -5,6 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Metal HUD - Expanded Replica</title>
     <style>
+        :root {
+            --hud-opacity: 0.6;
+            --hud-font-size: 10px;
+            --hud-line-height: 1.08;
+            --hud-font-family: monospace;
+            --hud-accent: #64D262;
+            --hud-graph-height: 42px;
+        }
+
         * {
             box-sizing: border-box;
         }
@@ -26,7 +35,7 @@
         .hud-container {
             width: 100%;
             height: 100%;
-            background-color: rgba(75, 75, 75, 0.6);
+            background-color: rgba(75, 75, 75, var(--hud-opacity));
             border-radius: 8px;
             padding: 6px 8px;
             display: flex;
@@ -38,9 +47,9 @@
 
         .hud-text {
             margin: 0;
-            font-family: monospace;
-            font-size: 10px;
-            line-height: 1.08;
+            font-family: var(--hud-font-family);
+            font-size: var(--hud-font-size);
+            line-height: var(--hud-line-height);
             font-weight: 500;
             letter-spacing: 0;
             white-space: pre;
@@ -50,14 +59,14 @@
         .c-white  { color: #FFFFFF; }
         .c-salmon { color: #FF756D; }
         .c-cyan   { color: #4EB4D8; }
-        .c-green  { color: #64D262; }
+        .c-green  { color: var(--hud-accent); }
         .c-amber  { color: #E8C45A; }
         .c-dim    { color: #B8B8B8; }
 
         .graph-container {
             width: 100%;
-            height: 42px;
-            flex: 0 0 42px;
+            height: var(--hud-graph-height);
+            flex: 0 0 var(--hud-graph-height);
             position: relative;
             margin-top: 1px;
         }
@@ -114,6 +123,18 @@
             str = String(str || '');
             return str.length > width ? str.slice(0, width) : str.padEnd(width, ' ');
         }
+
+        function updateHudConfig(c) {
+            const root = document.documentElement;
+            root.style.setProperty('--hud-opacity', c.opacity);
+            root.style.setProperty('--hud-font-size', `${c.fontSizePx}px`);
+            root.style.setProperty('--hud-line-height', c.lineHeight);
+            root.style.setProperty('--hud-font-family', c.useMonospace ? 'monospace' : 'sans-serif');
+            root.style.setProperty('--hud-accent', c.accent);
+            root.style.setProperty('--hud-graph-height', `${c.graphHeightPx}px`);
+            drawGraph();
+        }
+        window.updateHudConfig = updateHudConfig;
 
         // Called from Android (FloatingWindowService) every ~250ms with a single JSON object.
         function updateHudData(d) {
@@ -206,8 +227,9 @@
                 ctx.stroke();
             }
 
+            const accent = getComputedStyle(document.documentElement).getPropertyValue('--hud-accent').trim() || '#64D262';
             drawPath(intervalHistory, '#4EB4D8'); // frame interval (ms)
-            drawPath(gpuHistory, '#64D262');      // GPU time (ms)
+            drawPath(gpuHistory, accent);         // GPU time (ms)
         }
 
         window.addEventListener('resize', drawGraph);

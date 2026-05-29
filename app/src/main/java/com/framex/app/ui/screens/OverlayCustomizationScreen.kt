@@ -1,64 +1,79 @@
 package com.framex.app.ui.screens
 
 import android.widget.Toast
-import androidx.compose.ui.platform.LocalContext
-import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.ViewModel
-import com.framex.app.repository.SettingsRepository
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import javax.inject.Inject
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBackIosNew
-import androidx.compose.material.icons.filled.DeveloperBoard
-import androidx.compose.material.icons.filled.DeviceThermostat
-import androidx.compose.material.icons.filled.DragIndicator
-import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.NetworkCheck
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
-data class MetricModule(
-    val id: String,
-    val name: String,
-    val valueMock: String,
-    val icon: ImageVector,
-    val enabled: Boolean
-)
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import com.framex.app.repository.SettingsRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 
 @HiltViewModel
 class OverlayCustomizationViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository
 ) : ViewModel() {
-    val savedMode = settingsRepository.overlayMode
-    val savedModules = settingsRepository.enabledModules
+    val mode = settingsRepository.overlayMode
     val opacity = settingsRepository.overlayOpacity
     val textSize = settingsRepository.overlayTextSize
     val useMonospace = settingsRepository.overlayUseMonospace
     val colorIndex = settingsRepository.overlayColorIndex
-    
-    fun saveSettings(mode: String, modules: List<MetricModule>) {
+
+    fun save(mode: String, opacity: Float, textSize: Int, useMonospace: Boolean, colorIndex: Int) {
         settingsRepository.setOverlayMode(mode)
-        settingsRepository.setEnabledModules(modules.filter { it.enabled }.map { it.id }.toSet())
+        settingsRepository.setOverlayOpacity(opacity)
+        settingsRepository.setOverlayTextSize(textSize)
+        settingsRepository.setOverlayUseMonospace(useMonospace)
+        settingsRepository.setOverlayColorIndex(colorIndex)
     }
 }
 
@@ -67,226 +82,150 @@ fun OverlayCustomizationScreen(
     onNavigateBack: () -> Unit,
     viewModel: OverlayCustomizationViewModel = hiltViewModel()
 ) {
-    val savedMode by viewModel.savedMode.collectAsState()
-    val savedModules by viewModel.savedModules.collectAsState()
-    val opacity by viewModel.opacity.collectAsState()
-    val textSize by viewModel.textSize.collectAsState()
-    val useMonospace by viewModel.useMonospace.collectAsState()
-    val colorIndex by viewModel.colorIndex.collectAsState()
+    val savedMode by viewModel.mode.collectAsState()
+    val savedOpacity by viewModel.opacity.collectAsState()
+    val savedTextSize by viewModel.textSize.collectAsState()
+    val savedUseMonospace by viewModel.useMonospace.collectAsState()
+    val savedColorIndex by viewModel.colorIndex.collectAsState()
     val context = LocalContext.current
 
-    var selectedMode by remember(savedMode) { mutableStateOf(savedMode) }
-    val modes = listOf("Minimal", "Compact", "Expanded")
-    
+    val modes = listOf("Compact", "Standard", "Expanded")
     val colors = listOf(
-        MaterialTheme.colorScheme.primary,
-        Color(0xFF60A5FA),
-        Color(0xFF34D399),
-        Color(0xFF2DD4BF),
+        Color(0xFF64D262),
+        Color(0xFF4EB4D8),
+        Color(0xFFFF756D),
+        Color(0xFFE8C45A),
         Color(0xFFA78BFA),
-        Color(0xFFFBBF24)
+        Color(0xFFFFFFFF)
     )
-    val accentColor = colors[colorIndex]
-    val fontFamily = if (useMonospace) androidx.compose.ui.text.font.FontFamily.Monospace else MaterialTheme.typography.bodyMedium.fontFamily
-    val textScale = when(textSize) { 0 -> 0.8f; 2 -> 1.2f; else -> 1.0f }
 
-    var modules by remember(savedModules) {
-        mutableStateOf(
-            listOf(
-                MetricModule("fps", "Frames Per Second", "120", Icons.Default.Speed, savedModules.contains("fps")),
-                MetricModule("cpu", "CPU Usage", "34%", Icons.Default.Memory, savedModules.contains("cpu")),
-                MetricModule("ram", "RAM Usage", "4.2 GB", Icons.Default.DeveloperBoard, savedModules.contains("ram")),
-                MetricModule("temp", "Battery Temp", "38°C", Icons.Default.DeviceThermostat, savedModules.contains("temp")),
-                MetricModule("net", "Network Speed", "1.2 MB", Icons.Default.NetworkCheck, savedModules.contains("net"))
-            )
-        )
+    var selectedMode by remember(savedMode) {
+        mutableStateOf(if (savedMode in modes) savedMode else "Compact")
+    }
+    var selectedOpacity by remember(savedOpacity) { mutableFloatStateOf(savedOpacity.coerceIn(0.35f, 0.95f)) }
+    var selectedTextSize by remember(savedTextSize) { mutableIntStateOf(savedTextSize.coerceIn(0, 2)) }
+    var selectedUseMonospace by remember(savedUseMonospace) { mutableStateOf(savedUseMonospace) }
+    var selectedColorIndex by remember(savedColorIndex) {
+        mutableIntStateOf(savedColorIndex.coerceIn(colors.indices))
     }
 
-    val hasChanges = selectedMode != savedMode || modules.filter { it.enabled }.map { it.id }.toSet() != savedModules
+    val hasChanges = selectedMode != savedMode ||
+        selectedOpacity != savedOpacity ||
+        selectedTextSize != savedTextSize ||
+        selectedUseMonospace != savedUseMonospace ||
+        selectedColorIndex != savedColorIndex
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Header
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onNavigateBack) {
-                    Icon(imageVector = Icons.Default.ArrowBackIosNew, contentDescription = "Back", tint = Color.White)
+                    Icon(Icons.Default.ArrowBackIosNew, contentDescription = "Back", tint = Color.White)
                 }
-                Text("Overlay Config", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                Text("Metal HUD Config", style = MaterialTheme.typography.titleMedium, color = Color.White)
             }
 
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 24.dp),
-                contentPadding = PaddingValues(bottom = 100.dp)
+                modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
+                contentPadding = PaddingValues(bottom = 108.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
                 item {
-                    // Mode Selector
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surface)
-                            .padding(4.dp)
-                    ) {
-                        modes.forEach { mode ->
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(CircleShape)
-                                    .background(if (selectedMode == mode) accentColor else Color.Transparent)
-                                    .clickable { selectedMode = mode }
-                                    .padding(vertical = 12.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = mode,
-                                    color = if (selectedMode == mode) Color.White else Color.Gray,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(24.dp))
+                    MetalHudPreview(
+                        mode = selectedMode,
+                        opacity = selectedOpacity,
+                        textSize = selectedTextSize,
+                        useMonospace = selectedUseMonospace,
+                        accent = colors[selectedColorIndex]
+                    )
                 }
 
                 item {
-                    // Preview Card
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(180.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(16.dp))
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp).fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Row(
-                                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.primary.copy(0.2f)).border(1.dp, MaterialTheme.colorScheme.primary.copy(0.3f), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Preview", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                }
-                                Text("layout_v2.json", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
-                            }
-                            
-                            // Dynamic Preview Builder
-                            val enabledMods = modules.filter { it.enabled }
-                            
-                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color.Black.copy(opacity))
-                                        .border(1.dp, accentColor, RoundedCornerShape(8.dp))
-                                        .padding(if (selectedMode == "Minimal") (4 * textScale).dp else (8 * textScale).dp)
-                                ) {
-                                    if (selectedMode == "Expanded") {
-                                        Column(verticalArrangement = Arrangement.spacedBy((8 * textScale).dp)) {
-                                            enabledMods.forEach { mod ->
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Icon(mod.icon, contentDescription = null, tint = accentColor, modifier = Modifier.size((16 * textScale).dp))
-                                                    Spacer(modifier = Modifier.width((8 * textScale).dp))
-                                                    Text(mod.name, color = Color.Gray, fontSize = (10 * textScale).sp, fontFamily = fontFamily, modifier = Modifier.weight(1f))
-                                                    Text(mod.valueMock, color = Color.White, fontFamily = fontFamily, style = MaterialTheme.typography.labelSmall.copy(fontSize = (12 * textScale).sp, fontWeight = FontWeight.Bold))
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        Row(
-                                            horizontalArrangement = Arrangement.spacedBy((12 * textScale).dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.padding(horizontal = (4 * textScale).dp)
-                                        ) {
-                                            enabledMods.forEachIndexed { index, mod ->
-                                                if (selectedMode == "Minimal") {
-                                                    Text(mod.valueMock, color = Color.White, fontFamily = fontFamily, style = MaterialTheme.typography.labelSmall.copy(fontSize = (14 * textScale).sp, fontWeight = FontWeight.Bold))
-                                                } else {
-                                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                        Text(mod.id.uppercase(), color = Color.Gray, fontFamily = fontFamily, fontSize = (10 * textScale).sp, fontWeight = FontWeight.Bold)
-                                                        Text(mod.valueMock, color = if (index == 0) accentColor else Color.White, fontFamily = fontFamily, style = MaterialTheme.typography.labelSmall.copy(fontSize = (16 * textScale).sp, fontWeight = FontWeight.Bold))
-                                                    }
-                                                }
-                                                if (index < enabledMods.size - 1) {
-                                                    Box(modifier = Modifier.width(1.dp).height(if (selectedMode == "Minimal") (12 * textScale).dp else (24 * textScale).dp).background(Color.DarkGray))
-                                                }
-                                            }
-                                            if (enabledMods.isEmpty()) {
-                                                Text("No modules selected", color = Color.Gray, fontFamily = fontFamily, fontSize = (12 * textScale).sp)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(32.dp))
-                    Text("Active Modules", style = MaterialTheme.typography.titleMedium, color = Color.White)
-                    Text("Drag to reorder. Toggle to show in overlay.", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                    Spacer(modifier = Modifier.height(16.dp))
+                    ConfigLabel("HUD Size")
+                    SegmentedOptions(modes, selectedMode) { selectedMode = it }
                 }
 
-                items(modules) { module ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 12.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(16.dp))
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
-                            Icon(module.icon, contentDescription = null, tint = if (module.enabled) accentColor else Color.Gray)
+                item {
+                    ConfigLabel("Opacity ${Math.round(selectedOpacity * 100f)}%")
+                    Slider(
+                        value = selectedOpacity,
+                        onValueChange = { selectedOpacity = it },
+                        valueRange = 0.35f..0.95f
+                    )
+                }
+
+                item {
+                    ConfigLabel("Text Size")
+                    SegmentedOptions(listOf("Small", "Medium", "Large"), textSizeLabel(selectedTextSize)) {
+                        selectedTextSize = when (it) {
+                            "Small" -> 0
+                            "Large" -> 2
+                            else -> 1
                         }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(module.name, color = Color.White, fontWeight = FontWeight.Bold)
-                            Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(if(module.enabled) accentColor.copy(0.1f) else MaterialTheme.colorScheme.background).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                Text(module.valueMock, color = if(module.enabled) accentColor else Color.Gray, style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
-                        Switch(
-                            checked = module.enabled,
-                            onCheckedChange = { isChecked ->
-                                modules = modules.map { if (it.id == module.id) it.copy(enabled = isChecked) else it }
-                            },
-                            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Icon(Icons.Default.DragIndicator, contentDescription = "Drag", tint = Color.Gray)
                     }
+                }
+
+                item {
+                    ConfigToggle(
+                        title = "Monospace Readout",
+                        checked = selectedUseMonospace,
+                        accent = colors[selectedColorIndex],
+                        onCheckedChange = { selectedUseMonospace = it }
+                    )
+                }
+
+                item {
+                    ConfigLabel("Accent")
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        colors.forEachIndexed { index, color ->
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(color)
+                                    .border(
+                                        width = if (index == selectedColorIndex) 3.dp else 1.dp,
+                                        color = if (index == selectedColorIndex) Color.White else Color.White.copy(alpha = 0.25f),
+                                        shape = CircleShape
+                                    )
+                                    .clickable { selectedColorIndex = index }
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    ConfigLabel("Telemetry Rows")
+                    TelemetryRows(colors[selectedColorIndex])
                 }
             }
         }
-        
-        // Bottom Action
+
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.background.copy(0.95f))
+                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.95f))
                 .padding(24.dp)
         ) {
             Button(
-                onClick = { 
+                onClick = {
                     if (hasChanges) {
-                        viewModel.saveSettings(selectedMode, modules)
-                        Toast.makeText(context, "Overlay configuration saved!", Toast.LENGTH_SHORT).show()
+                        viewModel.save(
+                            selectedMode,
+                            selectedOpacity,
+                            selectedTextSize,
+                            selectedUseMonospace,
+                            selectedColorIndex
+                        )
+                        Toast.makeText(context, "Metal HUD configuration saved", Toast.LENGTH_SHORT).show()
                     }
                 },
                 enabled = hasChanges,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = accentColor, 
+                    containerColor = colors[selectedColorIndex],
                     contentColor = Color.White,
                     disabledContainerColor = Color.DarkGray.copy(alpha = 0.5f),
                     disabledContentColor = Color.Gray
@@ -299,3 +238,154 @@ fun OverlayCustomizationScreen(
         }
     }
 }
+
+@Composable
+private fun MetalHudPreview(
+    mode: String,
+    opacity: Float,
+    textSize: Int,
+    useMonospace: Boolean,
+    accent: Color
+) {
+    val fontSize = when (textSize) {
+        0 -> 9.sp
+        2 -> 11.sp
+        else -> 10.sp
+    }
+    val height = when (mode) {
+        "Expanded" -> 220.dp
+        "Standard" -> 198.dp
+        else -> 176.dp
+    }
+    val fontFamily = if (useMonospace) FontFamily.Monospace else FontFamily.Default
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(height)
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(16.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .width(300.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(75, 75, 75).copy(alpha = opacity))
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+        ) {
+            Text("Dimensity 9300+   [2400x1260]", color = Color.White, fontSize = fontSize, fontFamily = fontFamily)
+            Text("1.0x Direct no layer 144Hz", color = Color.White, fontSize = fontSize, fontFamily = fontFamily)
+            Text("Thermal:    Nominal", color = accent, fontSize = fontSize, fontFamily = fontFamily)
+            Text("FPS:       0.00 [  0.00   0.00]", color = Color.White, fontSize = fontSize, fontFamily = fontFamily)
+            Text("GPU:       --   [  --     --  ]", color = accent, fontSize = fontSize, fontFamily = fontFamily)
+            Text("Frame Interval:   0.00", color = Color.White, fontSize = fontSize, fontFamily = fontFamily)
+            Text("Cmd Buffer CPU:   --", color = Color(0xFF4EB4D8), fontSize = fontSize, fontFamily = fontFamily)
+            Text("Mem:  5.82GB    [6542MB free]", color = Color.White, fontSize = fontSize, fontFamily = fontFamily)
+            Spacer(modifier = Modifier.height(4.dp))
+            Canvas(modifier = Modifier.fillMaxWidth().height(36.dp)) {
+                drawRect(Color.White.copy(alpha = 0.35f), style = Stroke(width = 1.dp.toPx()))
+                val path = Path().apply {
+                    moveTo(0f, size.height * 0.72f)
+                    lineTo(size.width * 0.2f, size.height * 0.55f)
+                    lineTo(size.width * 0.4f, size.height * 0.62f)
+                    lineTo(size.width * 0.62f, size.height * 0.38f)
+                    lineTo(size.width * 0.82f, size.height * 0.48f)
+                    lineTo(size.width, size.height * 0.3f)
+                }
+                drawPath(path, accent, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConfigLabel(text: String) {
+    Text(text, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+    Spacer(modifier = Modifier.height(8.dp))
+}
+
+@Composable
+private fun SegmentedOptions(options: List<String>, selected: String, onSelect: (String) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(4.dp)
+    ) {
+        options.forEach { option ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(CircleShape)
+                    .background(if (selected == option) MaterialTheme.colorScheme.primary else Color.Transparent)
+                    .clickable { onSelect(option) }
+                    .padding(vertical = 11.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    option,
+                    color = if (selected == option) Color.White else Color.Gray,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConfigToggle(
+    title: String,
+    checked: Boolean,
+    accent: Color,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(title, color = Color.White, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent)
+        )
+    }
+}
+
+@Composable
+private fun TelemetryRows(accent: Color) {
+    val rows = listOf("CPU/SoC", "Display", "Thermal", "FPS", "GPU timings", "Memory")
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        rows.chunked(2).forEach { pair ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                pair.forEach { row ->
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(1.dp, accent.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Text(row, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun textSizeLabel(size: Int): String =
+    when (size) {
+        0 -> "Small"
+        2 -> "Large"
+        else -> "Medium"
+    }
