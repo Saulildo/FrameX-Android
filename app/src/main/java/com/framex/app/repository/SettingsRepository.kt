@@ -36,6 +36,12 @@ class SettingsRepository @Inject constructor(
     private val _overlayColorIndex = MutableStateFlow(prefs.getInt(KEY_OVERLAY_COLOR_INDEX, 0))
     val overlayColorIndex: StateFlow<Int> = _overlayColorIndex.asStateFlow()
 
+    private val _hudTargetPackage = MutableStateFlow(prefs.getString(KEY_HUD_TARGET_PACKAGE, "") ?: "")
+    val hudTargetPackage: StateFlow<String> = _hudTargetPackage.asStateFlow()
+
+    private val _hudTargetLabel = MutableStateFlow(prefs.getString(KEY_HUD_TARGET_LABEL, "") ?: "")
+    val hudTargetLabel: StateFlow<String> = _hudTargetLabel.asStateFlow()
+
     // Container background color index: 0=Black, 1=Dark Navy, 2=Charcoal, 3=Transparent
     private val _overlayBgColorIndex = MutableStateFlow(prefs.getInt(KEY_OVERLAY_BG_COLOR_INDEX, 0))
     val overlayBgColorIndex: StateFlow<Int> = _overlayBgColorIndex.asStateFlow()
@@ -86,6 +92,24 @@ class SettingsRepository @Inject constructor(
     fun setOverlayColorIndex(index: Int) {
         prefs.edit().putInt(KEY_OVERLAY_COLOR_INDEX, index).apply()
         _overlayColorIndex.value = index
+    }
+
+    fun setHudTargetApp(packageName: String, label: String) {
+        prefs.edit()
+            .putString(KEY_HUD_TARGET_PACKAGE, packageName)
+            .putString(KEY_HUD_TARGET_LABEL, label)
+            .apply()
+        _hudTargetPackage.value = packageName
+        _hudTargetLabel.value = label
+    }
+
+    fun clearHudTargetApp() {
+        prefs.edit()
+            .remove(KEY_HUD_TARGET_PACKAGE)
+            .remove(KEY_HUD_TARGET_LABEL)
+            .apply()
+        _hudTargetPackage.value = ""
+        _hudTargetLabel.value = ""
     }
 
     fun setOverlayBgColorIndex(index: Int) {
@@ -158,6 +182,8 @@ class SettingsRepository @Inject constructor(
         private const val KEY_OVERLAY_TEXT_SIZE = "overlay_text_size"
         private const val KEY_OVERLAY_USE_MONOSPACE = "overlay_use_monospace"
         private const val KEY_OVERLAY_COLOR_INDEX = "overlay_color_index"
+        private const val KEY_HUD_TARGET_PACKAGE = "hud_target_package"
+        private const val KEY_HUD_TARGET_LABEL = "hud_target_label"
         private const val KEY_OVERLAY_BG_COLOR_INDEX = "overlay_bg_color_index"
         private const val KEY_OVERLAY_BORDER_COLOR_INDEX = "overlay_border_color_index"
         private const val KEY_OVERLAY_TEXT_COLOR_INDEX = "overlay_text_color_index"

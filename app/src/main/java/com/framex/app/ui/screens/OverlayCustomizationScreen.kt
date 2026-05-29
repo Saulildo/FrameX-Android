@@ -1,5 +1,7 @@
 package com.framex.app.ui.screens
 
+import android.content.Context
+import android.content.pm.PackageManager
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -14,16 +16,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBackIosNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -50,23 +55,55 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.framex.app.core.root.RootManager
+import com.framex.app.hud.FloatingWindowService
+import com.framex.app.hud.GpuLayerInjector
 import com.framex.app.repository.SettingsRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+data class HudInjectableApp(
+    val packageName: String,
+    val label: String
+)
 
 @HiltViewModel
 class OverlayCustomizationViewModel @Inject constructor(
-    private val settingsRepository: SettingsRepository
+    @ApplicationContext private val context: Context,
+    private val settingsRepository: SettingsRepository,
+    private val rootManager: RootManager
 ) : ViewModel() {
     val mode = settingsRepository.overlayMode
     val opacity = settingsRepository.overlayOpacity
     val textSize = settingsRepository.overlayTextSize
     val useMonospace = settingsRepository.overlayUseMonospace
     val colorIndex = settingsRepository.overlayColorIndex
+    val targetPackage = settingsRepository.hudTargetPackage
+    val targetLabel = settingsRepository.hudTargetLabel
+
+    private val _apps = MutableStateFlow<List<HudInjectableApp>>(emptyList())
+    val apps = _apps.asStateFlow()
+
+    private val _isInjecting = MutableStateFlow(false)
+    val isInjecting = _isInjecting.asStateFlow()
+
+    private val _injectionStatus = MutableStateFlow("")
+    val injectionStatus = _injectionStatus.asStateFlow()
+
+    init {
+        loadApps()
+    }
 
     fun save(mode: String, opacity: Float, textSize: Int, useMonospace: Boolean, colorIndex: Int) {
         settingsRepository.setOverlayMode(mode)
@@ -74,6 +111,76 @@ class OverlayCustomizationViewModel @Inject constructor(
         settingsRepository.setOverlayTextSize(textSize)
         settingsRepository.setOverlayUseMonospace(useMonospace)
         settingsRepository.setOverlayColorIndex(colorIndex)
+    }
+
+    fun selectTarget(app: HudInjectableApp) {
+        settingsRepository.setHudTargetApp(app.packageName, app.label)
+        _injectionStatus.value = "${app.label} selected"
+    }
+
+    fun injectSelectedTarget() {
+        val packageName = targetPackage.value
+        val label = targetLabel.value.ifBlank { packageName }
+        if (packageName.isBlank()) {
+            _injectionStatus.value = "Choose an app first"
+            return
+        }
+
+        viewModelScope.launch {
+            _isInjecting.value = true
+            if (!FloatingWindowService.start(context)) {
+                _injectionStatus.value = "Grant overlay permission first"
+                _isInjecting.value = false
+                return@launch
+            }
+
+            _injectionStatus.value = "Requesting root..."
+            val rooted = rootManager.refresh()
+            if (!rooted) {
+                _injectionStatus.value = "Root access is required"
+                _isInjecting.value = false
+                return@launch
+            }
+
+            val ok = GpuLayerInjector(rootManager).enable(packageName, forceRestart = true)
+            _injectionStatus.value = if (ok) {
+                "Layer target set for $label. Launch it again now."
+            } else {
+                "Injection failed"
+            }
+            _isInjecting.value = false
+        }
+    }
+
+    fun clearInjection() {
+        viewModelScope.launch {
+            _isInjecting.value = true
+            if (rootManager.refresh()) {
+                GpuLayerInjector(rootManager).disable()
+            }
+            settingsRepository.clearHudTargetApp()
+            _injectionStatus.value = "Injection cleared"
+            _isInjecting.value = false
+        }
+    }
+
+    private fun loadApps() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val pm = context.packageManager
+            val result = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+                .asSequence()
+                .filter { it.packageName != context.packageName }
+                .filter { pm.getLaunchIntentForPackage(it.packageName) != null }
+                .map {
+                    HudInjectableApp(
+                        packageName = it.packageName,
+                        label = it.loadLabel(pm).toString()
+                    )
+                }
+                .sortedWith(compareBy<HudInjectableApp> { it.label.lowercase() }.thenBy { it.packageName })
+                .toList()
+            _apps.value = result
+        }
     }
 }
 
@@ -87,6 +194,11 @@ fun OverlayCustomizationScreen(
     val savedTextSize by viewModel.textSize.collectAsState()
     val savedUseMonospace by viewModel.useMonospace.collectAsState()
     val savedColorIndex by viewModel.colorIndex.collectAsState()
+    val apps by viewModel.apps.collectAsState()
+    val targetPackage by viewModel.targetPackage.collectAsState()
+    val targetLabel by viewModel.targetLabel.collectAsState()
+    val isInjecting by viewModel.isInjecting.collectAsState()
+    val injectionStatus by viewModel.injectionStatus.collectAsState()
     val context = LocalContext.current
 
     val modes = listOf("Compact", "Standard", "Expanded")
@@ -139,6 +251,21 @@ fun OverlayCustomizationScreen(
                         textSize = selectedTextSize,
                         useMonospace = selectedUseMonospace,
                         accent = colors[selectedColorIndex]
+                    )
+                }
+
+                item {
+                    ConfigLabel("GPU Layer Injection")
+                    InjectionMenu(
+                        apps = apps,
+                        selectedPackage = targetPackage,
+                        selectedLabel = targetLabel,
+                        status = injectionStatus,
+                        isInjecting = isInjecting,
+                        accent = colors[selectedColorIndex],
+                        onSelect = viewModel::selectTarget,
+                        onInject = viewModel::injectSelectedTarget,
+                        onClear = viewModel::clearInjection
                     )
                 }
 
@@ -235,6 +362,131 @@ fun OverlayCustomizationScreen(
             ) {
                 Text(if (hasChanges) "Apply Changes" else "Applied", fontWeight = FontWeight.Bold)
             }
+        }
+    }
+}
+
+@Composable
+private fun InjectionMenu(
+    apps: List<HudInjectableApp>,
+    selectedPackage: String,
+    selectedLabel: String,
+    status: String,
+    isInjecting: Boolean,
+    accent: Color,
+    onSelect: (HudInjectableApp) -> Unit,
+    onInject: () -> Unit,
+    onClear: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val displayLabel = selectedLabel.ifBlank { "Choose target app" }
+    val displayPackage = selectedPackage.ifBlank { "No app selected" }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, accent.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
+            .padding(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    displayLabel,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    displayPackage,
+                    color = Color.Gray,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Button(
+                onClick = { expanded = !expanded },
+                colors = ButtonDefaults.buttonColors(containerColor = accent.copy(alpha = 0.18f), contentColor = accent),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text(if (expanded) "Close" else "Apps", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+        }
+
+        if (expanded) {
+            Spacer(modifier = Modifier.height(10.dp))
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 230.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.background)
+            ) {
+                items(apps, key = { it.packageName }) { app ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                onSelect(app)
+                                expanded = false
+                            }
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            app.label,
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            app.packageName,
+                            color = Color.Gray,
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = onInject,
+                enabled = selectedPackage.isNotBlank() && !isInjecting,
+                colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Color.White),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                if (isInjecting) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                } else {
+                    Text("Inject & Restart", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+            Button(
+                onClick = onClear,
+                enabled = !isInjecting,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White.copy(alpha = 0.08f),
+                    contentColor = Color.LightGray
+                ),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text("Clear", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+        }
+
+        if (status.isNotBlank()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(status, color = accent, fontSize = 11.sp)
         }
     }
 }

@@ -362,14 +362,19 @@ class FloatingWindowService : Service() {
      * initialises, so a game already running must be relaunched once after the HUD starts.
      */
     private suspend fun maybeInjectForeground() {
-        val out = rootManager.executeCommand(
+        val prefs = getSharedPreferences("framex_settings", Context.MODE_PRIVATE)
+        val manualTarget = prefs.getString(KEY_HUD_TARGET_PACKAGE, null)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() && it != OUR_PACKAGE }
+
+        val pkg = manualTarget ?: rootManager.executeCommand(
             """
                 PKG=${'$'}(dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | grep -oE '([a-zA-Z][a-zA-Z0-9_]*\.)+[a-zA-Z0-9_]+/[a-zA-Z0-9_.$]+' | head -n1 | cut -d/ -f1)
                 [ -z "${'$'}PKG" ] && PKG=${'$'}(dumpsys activity activities 2>/dev/null | grep -E 'topResumedActivity|mResumedActivity' | grep -oE '([a-zA-Z][a-zA-Z0-9_]*\.)+[a-zA-Z0-9_]+/[a-zA-Z0-9_.$]+' | head -n1 | cut -d/ -f1)
                 echo "${'$'}PKG"
             """.trimIndent(),
-        )
-        val pkg = out.trim().lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() } ?: return
+        ).trim().lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() } ?: return
+
         if (pkg == OUR_PACKAGE || pkg == lastInjected) return
         lastInjected = pkg
         injector.enable(pkg, forceRestart = false)
@@ -507,6 +512,7 @@ class FloatingWindowService : Service() {
         private const val KEY_HUD_X = "hud_x"
         private const val KEY_HUD_Y = "hud_y"
         private const val KEY_OVERLAY_WAS_RUNNING = "overlay_was_running"
+        private const val KEY_HUD_TARGET_PACKAGE = "hud_target_package"
         private const val KEY_HUD_MODE = "overlay_mode"
         private const val KEY_HUD_OPACITY = "overlay_opacity"
         private const val KEY_HUD_TEXT_SIZE_SETTING = "overlay_text_size"

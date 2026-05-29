@@ -40,11 +40,33 @@ class GpuLayerInjector(private val root: RootManager) {
             appendLine("settings put global gpu_debug_layers $VK_LAYER_NAME")
             appendLine("settings put global gpu_debug_layers_gles $GLES_LAYER_SO")
             if (forceRestart) appendLine("am force-stop $targetPackage")
+            appendLine("echo FRAMEX_ENABLE=${'$'}(settings get global enable_gpu_debug_layers)")
+            appendLine("echo FRAMEX_APP=${'$'}(settings get global gpu_debug_app)")
+            appendLine("echo FRAMEX_LAYER_APP=${'$'}(settings get global gpu_debug_layer_app)")
+            appendLine("echo FRAMEX_VK=${'$'}(settings get global gpu_debug_layers)")
+            appendLine("echo FRAMEX_GLES=${'$'}(settings get global gpu_debug_layers_gles)")
         }
-        root.executeCommand(script)
-        injectedPackage = targetPackage
-        Log.i(TAG, "GPU layer injection enabled for $targetPackage (restart=$forceRestart)")
-        return true
+        val out = root.executeCommand(script)
+        val applied = out.lineSequence()
+            .mapNotNull { line ->
+                val idx = line.indexOf('=')
+                if (idx < 0) null else line.substring(0, idx).trim() to line.substring(idx + 1).trim()
+            }
+            .toMap()
+
+        val ok = applied["FRAMEX_ENABLE"] == "1" &&
+            applied["FRAMEX_APP"] == targetPackage &&
+            applied["FRAMEX_LAYER_APP"] == OUR_PACKAGE &&
+            applied["FRAMEX_VK"] == VK_LAYER_NAME &&
+            applied["FRAMEX_GLES"] == GLES_LAYER_SO
+
+        if (ok) {
+            injectedPackage = targetPackage
+            Log.i(TAG, "GPU layer injection enabled for $targetPackage (restart=$forceRestart)")
+        } else {
+            Log.w(TAG, "GPU layer injection settings did not apply for $targetPackage: $out")
+        }
+        return ok
     }
 
     /** Clears all GPU debug layer settings so no further apps are instrumented. */
