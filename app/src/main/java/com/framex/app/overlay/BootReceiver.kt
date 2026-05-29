@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import com.framex.app.hud.FloatingWindowService
 
 /**
  * Restarts the overlay service automatically after a device reboot
@@ -20,13 +21,13 @@ class BootReceiver : BroadcastReceiver() {
         if (intent.action !in validActions) return
 
         // Only restart if the service was previously running (user had it enabled).
-        // OverlayService.isRunning is an in-process StateFlow, so it resets to false on
+        // FloatingWindowService.isRunning is an in-process StateFlow, so it resets to false on
         // a fresh boot. We rely on the SettingsRepository persisted preference instead.
         val prefs = context.getSharedPreferences("framex_settings", Context.MODE_PRIVATE)
         val wasRunning = prefs.getBoolean("overlay_was_running", false)
         if (!wasRunning) return
 
-        val serviceIntent = Intent(context, OverlayService::class.java)
+        val serviceIntent = Intent(context, FloatingWindowService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(serviceIntent)
         } else {

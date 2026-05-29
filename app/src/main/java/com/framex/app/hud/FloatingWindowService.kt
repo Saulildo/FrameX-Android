@@ -88,6 +88,8 @@ class FloatingWindowService : Service() {
         collector = HudTelemetryCollector(rootManager)
         injector = GpuLayerInjector(rootManager)
         _isRunning.value = true
+        getSharedPreferences("framex_settings", Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_OVERLAY_WAS_RUNNING, true).apply()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
         createNotificationChannel()
@@ -112,6 +114,8 @@ class FloatingWindowService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         _isRunning.value = false
+        getSharedPreferences("framex_settings", Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_OVERLAY_WAS_RUNNING, false).apply()
         telemetryJob?.cancel()
         ipcServer.close()
         // Best-effort: clear the global GPU-debug-layer settings so we stop instrumenting games
@@ -158,8 +162,8 @@ class FloatingWindowService : Service() {
         webView = wv
 
         layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            hudWidthPx(),
+            hudHeightPx(),
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             } else {
@@ -240,6 +244,19 @@ class FloatingWindowService : Service() {
             .putInt(KEY_HUD_X, x)
             .putInt(KEY_HUD_Y, y)
             .apply()
+    }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
+
+    private fun hudWidthPx(): Int {
+        val maxWidth = (resources.displayMetrics.widthPixels - dp(8)).coerceAtLeast(dp(260))
+        return dp(HUD_WIDTH_DP).coerceAtMost(maxWidth)
+    }
+
+    private fun hudHeightPx(): Int {
+        val maxHeight = (resources.displayMetrics.heightPixels - dp(80)).coerceAtLeast(dp(220))
+        return dp(HUD_HEIGHT_DP).coerceAtMost(maxHeight)
     }
 
     private fun removeOverlay() {
@@ -389,6 +406,9 @@ class FloatingWindowService : Service() {
 
         private const val KEY_HUD_X = "hud_x"
         private const val KEY_HUD_Y = "hud_y"
+        private const val KEY_OVERLAY_WAS_RUNNING = "overlay_was_running"
+        private const val HUD_WIDTH_DP = 360
+        private const val HUD_HEIGHT_DP = 330
 
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()

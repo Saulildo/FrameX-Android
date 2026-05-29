@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
+import com.framex.app.hud.FloatingWindowService
 import com.framex.app.overlay.OverlayService
 import com.framex.app.ui.components.PrimaryButton
 import com.framex.app.ui.components.QuickActionButton
@@ -65,7 +66,9 @@ fun DashboardScreen(
     dashboardViewModel: DashboardViewModel = androidx.hilt.navigation.compose.hiltViewModel()
 ) {
     val isRootAvailable by viewModel.isRootAvailable.collectAsState()
-    val isOverlayRunning by OverlayService.isRunning.collectAsState()
+    val isHudRunning by FloatingWindowService.isRunning.collectAsState()
+    val isLegacyOverlayRunning by OverlayService.isRunning.collectAsState()
+    val isOverlayRunning = isHudRunning || isLegacyOverlayRunning
     val fpsHistory by dashboardViewModel.fpsHistory.collectAsState()
     val context = LocalContext.current
 
@@ -240,24 +243,34 @@ fun DashboardScreen(
                 if (isOverlayRunning) {
                     Button(
                         onClick = {
-                            val intent = Intent(context, OverlayService::class.java).apply {
-                                action = OverlayService.ACTION_STOP
+                            if (isHudRunning) FloatingWindowService.stop(context)
+                            if (isLegacyOverlayRunning) {
+                                context.startService(
+                                    Intent(context, OverlayService::class.java).apply {
+                                        action = OverlayService.ACTION_STOP
+                                    },
+                                )
                             }
-                            context.startService(intent)
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(0.2f), contentColor = Color.Red),
                         shape = CircleShape,
                         modifier = Modifier.fillMaxWidth().height(56.dp)
                     ) {
-                        Text("Stop Overlay", fontWeight = FontWeight.Bold)
+                        Text("Stop Metal HUD", fontWeight = FontWeight.Bold)
                     }
                 } else {
                     if (allPermissionsReady) {
                         PrimaryButton(
-                            text = "Start Overlay",
+                            text = "Start Metal HUD",
                             onClick = {
-                                val intent = Intent(context, OverlayService::class.java)
-                                context.startForegroundService(intent)
+                                if (isLegacyOverlayRunning) {
+                                    context.startService(
+                                        Intent(context, OverlayService::class.java).apply {
+                                            action = OverlayService.ACTION_STOP
+                                        },
+                                    )
+                                }
+                                FloatingWindowService.start(context)
                             },
                             icon = { Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(28.dp)) }
                         )
@@ -342,5 +355,3 @@ fun DashboardScreen(
         }
     }
 }
-
-
