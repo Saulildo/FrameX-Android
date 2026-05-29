@@ -325,7 +325,9 @@ class FloatingWindowService : Service() {
         const val NOTIFICATION_ID = 7 // overlay=1, gaming=2 are taken
         const val ACTION_STOP = "com.framex.app.ACTION_STOP_HUD"
 
-        private const val POLL_INTERVAL_MS = 500L
+        // 250ms push cadence keeps the readout responsive (low delay). Measurement windows in
+        // HudTelemetryCollector are wider than this, so values stay smooth despite frequent pushes.
+        private const val POLL_INTERVAL_MS = 250L
         private const val TOUCH_SLOP = 8f
 
         private const val KEY_HUD_X = "hud_x"

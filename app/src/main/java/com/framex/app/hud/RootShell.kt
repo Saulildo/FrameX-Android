@@ -22,9 +22,8 @@ import java.io.OutputStreamWriter
  * Thread-safety: a [Mutex] serializes commands so two coroutines never interleave their writes
  * into the single shell. All blocking I/O runs on [Dispatchers.IO].
  *
- * This is intentionally independent of the existing Shizuku pipeline (`CommandRunnerService`),
- * which runs unprivileged `sh -c`. The HUD telemetry needs genuine root for `dumpsys`,
- * `wm size`, and per-app `gfxinfo`, so it uses real `su`.
+ * The HUD telemetry is a pure-root pipeline: it needs genuine uid 0 for SurfaceFlinger present
+ * timestamps, `dumpsys`, `wm size`, and per-app `gfxinfo`, so it always uses real `su`.
  */
 class RootShell {
 
