@@ -363,8 +363,11 @@ class FloatingWindowService : Service() {
      */
     private suspend fun maybeInjectForeground() {
         val out = rootManager.executeCommand(
-            "dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' " +
-                "| grep -oE '[a-zA-Z0-9._]+/[a-zA-Z0-9._]+' | head -n1 | cut -d/ -f1",
+            """
+                PKG=${'$'}(dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | grep -oE '([a-zA-Z][a-zA-Z0-9_]*\.)+[a-zA-Z0-9_]+/[a-zA-Z0-9_.$]+' | head -n1 | cut -d/ -f1)
+                [ -z "${'$'}PKG" ] && PKG=${'$'}(dumpsys activity activities 2>/dev/null | grep -E 'topResumedActivity|mResumedActivity' | grep -oE '([a-zA-Z][a-zA-Z0-9_]*\.)+[a-zA-Z0-9_]+/[a-zA-Z0-9_.$]+' | head -n1 | cut -d/ -f1)
+                echo "${'$'}PKG"
+            """.trimIndent(),
         )
         val pkg = out.trim().lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() } ?: return
         if (pkg == OUR_PACKAGE || pkg == lastInjected) return

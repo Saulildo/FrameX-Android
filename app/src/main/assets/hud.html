@@ -141,7 +141,8 @@
             document.getElementById('txt-device').innerText =
                 `${fit(d.device, 18)}[${d.resolution}]`;
 
-            const apiTag = (d.api && d.api !== '—') ? d.api : 'no layer';
+            const hasGpuLayer = d.api === 'Vulkan' || d.api === 'OpenGL';
+            const apiTag = hasGpuLayer ? d.api : (d.fps > 0 ? 'surface' : 'no layer');
             document.getElementById('txt-display').innerText =
                 `${fit(d.scale, 10)} ${fit(apiTag, 8)} ${d.hz}Hz`;
 
@@ -158,18 +159,28 @@
             document.getElementById('min-fps').innerText = pad(fpsMin === Infinity ? f(-1) : f(fpsMin), 6);
             document.getElementById('max-fps').innerText = pad(f(fpsMax), 6);
 
-            // GPU ms + running min/max (only track when a layer is reporting real values).
-            if (d.gpuMs >= 0) { gpuMin = Math.min(gpuMin, d.gpuMs); gpuMax = Math.max(gpuMax, d.gpuMs); }
-            document.getElementById('val-gpu').innerText = pad(f(d.gpuMs), 6);
-            document.getElementById('min-gpu').innerText = pad(gpuMin === Infinity ? f(-1) : f(gpuMin), 6);
-            document.getElementById('max-gpu').innerText = pad(f(gpuMax), 6);
-
-            document.getElementById('val-present').innerText = pad(f(d.presentDelayMs), 6);
+            // GPU/encoder timings only exist once the Vulkan/GLES layer is loaded in the target.
+            if (hasGpuLayer) {
+                if (d.gpuMs >= 0) { gpuMin = Math.min(gpuMin, d.gpuMs); gpuMax = Math.max(gpuMax, d.gpuMs); }
+                document.getElementById('val-gpu').innerText = pad(f(d.gpuMs), 6);
+                document.getElementById('min-gpu').innerText = pad(gpuMin === Infinity ? f(-1) : f(gpuMin), 6);
+                document.getElementById('max-gpu').innerText = pad(f(gpuMax), 6);
+                document.getElementById('val-present').innerText = pad(f(d.presentDelayMs), 6);
+                document.getElementById('val-cmd').innerText = pad(f(d.cmdBufferCpuMs), 6);
+                document.getElementById('val-render').innerText = pad(f(d.renderEncoderCpuMs), 6);
+                document.getElementById('val-compute').innerText = pad(f(d.computeEncoderCpuMs), 6);
+                document.getElementById('val-blit').innerText = pad(f(d.blitEncoderMs), 6);
+            } else {
+                document.getElementById('val-gpu').innerText = pad('wait', 6);
+                document.getElementById('min-gpu').innerText = pad('layer', 6);
+                document.getElementById('max-gpu').innerText = pad('load', 6);
+                document.getElementById('val-present').innerText = pad('wait', 6);
+                document.getElementById('val-cmd').innerText = pad('wait', 6);
+                document.getElementById('val-render').innerText = pad('wait', 6);
+                document.getElementById('val-compute').innerText = pad('wait', 6);
+                document.getElementById('val-blit').innerText = pad('wait', 6);
+            }
             document.getElementById('val-interval').innerText = pad(f(d.frameIntervalMs), 6);
-            document.getElementById('val-cmd').innerText = pad(f(d.cmdBufferCpuMs), 6);
-            document.getElementById('val-render').innerText = pad(f(d.renderEncoderCpuMs), 6);
-            document.getElementById('val-compute').innerText = pad(f(d.computeEncoderCpuMs), 6);
-            document.getElementById('val-blit').innerText = pad(f(d.blitEncoderMs), 6);
 
             document.getElementById('val-mem').innerText = f(d.memUsedGb);
             document.getElementById('val-memavail').innerText = f(d.memAvailMb, 0);

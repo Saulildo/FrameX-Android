@@ -64,6 +64,8 @@ class HudTelemetryCollector(private val root: RootManager) {
     private var smoothBlit = 0.0
     private var lastMemUsedGb = 0.0
     private var lastMemAvailMb = 0.0
+    private var timestatsStarted = false
+    private var lastTimestatsResetMs = 0L
 
     private var tick = 0L
 
@@ -74,9 +76,22 @@ class HudTelemetryCollector(private val root: RootManager) {
     suspend fun sample(gpu: GpuFrameStats?): HudTelemetry? {
         val haveLayer = gpu != null
         val includeSlow = (tick % SLOW_EVERY == 0L)
+        val nowMs = System.currentTimeMillis()
+        val resetTimestats = !haveLayer &&
+            (!timestatsStarted || nowMs - lastTimestatsResetMs >= TIMESTATS_RESET_MS)
         tick++
 
-        val raw = root.executeCommand(buildScript(includeSlow, includeFpsFallback = !haveLayer))
+        val raw = root.executeCommand(
+            buildScript(
+                includeSlow = includeSlow,
+                includeFpsFallback = !haveLayer,
+                resetTimestats = resetTimestats
+            )
+        )
+        if (resetTimestats) {
+            timestatsStarted = true
+            lastTimestatsResetMs = nowMs
+        }
         if (raw.isBlank() && !root.isAlive) return null
 
         val sections = splitSections(raw)
@@ -108,7 +123,9 @@ class HudTelemetryCollector(private val root: RootManager) {
             smoothBlit = emaSigned(smoothBlit, gpu.blitEncoderMs)
         } else {
             api = "—"
-            parseLatencyFps(sections[SEC_LATENCY])?.let { fps ->
+            val fallbackFps = parseLatencyFps(sections[SEC_LATENCY])
+                ?: parseTimestatsFps(sections[SEC_TIMESTATS])
+            fallbackFps?.let { fps ->
                 if (fps > 0.0) smoothFps = ema(smoothFps, fps, FPS_ALPHA)
             }
             // No layer => no GPU/encoder visibility.
@@ -144,7 +161,11 @@ class HudTelemetryCollector(private val root: RootManager) {
 
     // --- batched script -----------------------------------------------------
 
-    private fun buildScript(includeSlow: Boolean, includeFpsFallback: Boolean): String {
+    private fun buildScript(
+        includeSlow: Boolean,
+        includeFpsFallback: Boolean,
+        resetTimestats: Boolean
+    ): String {
         val lines = ArrayList<String>()
         if (includeSlow) {
             lines += "echo $MARKER_PREFIX$SEC_MODEL"
@@ -176,14 +197,24 @@ class HudTelemetryCollector(private val root: RootManager) {
 
         // Only pay for SurfaceFlinger present timestamps when no GPU layer is feeding us FPS.
         if (includeFpsFallback) {
-            lines += "FX_PKG=\$(dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' " +
-                "| grep -oE '[a-zA-Z0-9._]+/[a-zA-Z0-9._]+' | head -n1 | cut -d/ -f1)"
             lines += "echo $MARKER_PREFIX$SEC_LATENCY"
-            lines += "if [ -n \"\$FX_PKG\" ]; then " +
-                "LIST=\$(dumpsys SurfaceFlinger --list 2>/dev/null); " +
-                "LAYER=\$(echo \"\$LIST\" | grep -F \"\$FX_PKG\" | grep -iF SurfaceView | tail -n1); " +
-                "[ -z \"\$LAYER\" ] && LAYER=\$(echo \"\$LIST\" | grep -F \"\$FX_PKG\" | tail -n1); " +
-                "dumpsys SurfaceFlinger --latency \"\$LAYER\" 2>/dev/null; fi"
+            lines += """
+                FX_PKG=${'$'}(dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | grep -oE '([a-zA-Z][a-zA-Z0-9_]*\.)+[a-zA-Z0-9_]+/[a-zA-Z0-9_.$]+' | head -n1 | cut -d/ -f1)
+                [ -z "${'$'}FX_PKG" ] && FX_PKG=${'$'}(dumpsys activity activities 2>/dev/null | grep -E 'topResumedActivity|mResumedActivity' | grep -oE '([a-zA-Z][a-zA-Z0-9_]*\.)+[a-zA-Z0-9_]+/[a-zA-Z0-9_.$]+' | head -n1 | cut -d/ -f1)
+                echo "pkg=${'$'}FX_PKG"
+                if [ -n "${'$'}FX_PKG" ]; then
+                  LIST=${'$'}(dumpsys SurfaceFlinger --list 2>/dev/null)
+                  LAYER=${'$'}(printf "%s\n" "${'$'}LIST" | grep -F "${'$'}FX_PKG" | grep -iE 'SurfaceView|BLAST|ActivityRecord|BufferQueue|ViewRoot' | tail -n1)
+                  [ -z "${'$'}LAYER" ] && LAYER=${'$'}(printf "%s\n" "${'$'}LIST" | grep -F "${'$'}FX_PKG" | tail -n1)
+                  echo "layer=${'$'}LAYER"
+                  [ -n "${'$'}LAYER" ] && dumpsys SurfaceFlinger --latency "${'$'}LAYER" 2>/dev/null
+                fi
+            """.trimIndent()
+            lines += "echo $MARKER_PREFIX$SEC_TIMESTATS"
+            lines += "dumpsys SurfaceFlinger --timestats -dump 2>/dev/null | grep -i 'averageFPS' | tail -n 8"
+            if (resetTimestats) {
+                lines += "dumpsys SurfaceFlinger --timestats -clear -enable >/dev/null 2>&1"
+            }
         }
         return lines.joinToString("\n")
     }
@@ -293,6 +324,17 @@ class HudTelemetryCollector(private val root: RootManager) {
         return ((use.size - 1) / (span / 1_000_000_000.0)).coerceIn(0.0, 1000.0)
     }
 
+    private fun parseTimestatsFps(block: String?): Double? {
+        block ?: return null
+        var best = 0.0
+        val rx = Regex("averageFPS\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)")
+        for (m in rx.findAll(block)) {
+            val fps = m.groupValues[1].toDoubleOrNull() ?: continue
+            if (fps > best) best = fps
+        }
+        return if (best > 0.0) best.coerceIn(0.0, 1000.0) else null
+    }
+
     // --- helpers ------------------------------------------------------------
 
     private fun ema(prev: Double, next: Double, alpha: Double): Double =
@@ -313,9 +355,11 @@ class HudTelemetryCollector(private val root: RootManager) {
         const val SEC_THERMAL = "THERMAL"
         const val SEC_MEM = "MEM"
         const val SEC_LATENCY = "LATENCY"
+        const val SEC_TIMESTATS = "TIMESTATS"
 
         const val PENDING = Long.MAX_VALUE
         const val FPS_WINDOW_NS = 1_000_000_000L
+        const val TIMESTATS_RESET_MS = 3000L
         const val SLOW_EVERY = 16L
         const val FPS_ALPHA = 0.5
         const val TIMING_ALPHA = 0.4
