@@ -33,7 +33,36 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        id: build
+        shell: bash
+        run: |
+          set +e
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee build-output.log
+          Status=${PIPESTATUS[0]}
+          echo "status=$Status" >> "$GITHUB_OUTPUT"
+          exit "$Status"
+
+      - name: Report build failure
+        if: failure() && steps.build.outputs.status != '0'
+        shell: bash
+        run: |
+          {
+            echo "### Gradle failure"
+            echo '```text'
+            tail -n 120 build-output.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          Message=$(tail -n 80 build-output.log | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+          echo "::error title=Gradle build failed::$Message"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FrameX-build-log
+          path: build-output.log
+          if-no-files-found: ignore
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
