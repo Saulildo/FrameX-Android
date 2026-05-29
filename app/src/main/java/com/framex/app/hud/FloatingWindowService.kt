@@ -18,6 +18,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.app.NotificationCompat
@@ -139,7 +140,7 @@ class FloatingWindowService : Service() {
                 allowFileAccess = true         // load file:///android_asset/hud.html
                 domStorageEnabled = false
                 // No network is used; everything is local. Keep cache off.
-                cacheMode = WebView.LOAD_NO_CACHE
+                cacheMode = WebSettings.LOAD_NO_CACHE
             }
             // The HUD is display-only: don't let the page try to take focus or show scrollbars.
             isFocusable = false
