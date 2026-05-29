@@ -5,34 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Metal HUD - Expanded Replica</title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
         body {
             margin: 0;
+            width: 100%;
+            height: 100%;
             background: rgba(0, 0, 0, 0); /* transparent for the Android overlay */
-            height: 100vh;
+            overflow: hidden;
             display: flex;
             align-items: flex-start;
             justify-content: flex-start;
             -webkit-font-smoothing: antialiased;
+            -webkit-text-size-adjust: 100%;
         }
 
         .hud-container {
+            width: 100%;
+            height: 100%;
             background-color: rgba(75, 75, 75, 0.6);
-            border-radius: 12px;
-            padding: 10px 14px 8px 14px;
+            border-radius: 8px;
+            padding: 6px 8px;
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 2px;
+            overflow: hidden;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
         }
 
         .hud-text {
             margin: 0;
             font-family: monospace;
-            font-size: 15px;
-            line-height: 1.3;
+            font-size: 10px;
+            line-height: 1.08;
             font-weight: 500;
             letter-spacing: 0;
             white-space: pre;
+            flex: 0 0 auto;
         }
 
         .c-white  { color: #FFFFFF; }
@@ -44,9 +56,10 @@
 
         .graph-container {
             width: 100%;
-            height: 70px;
+            height: 42px;
+            flex: 0 0 42px;
             position: relative;
-            margin-top: 2px;
+            margin-top: 1px;
         }
 
         canvas {
@@ -97,14 +110,19 @@
             return str.length >= width ? str : ' '.repeat(width - str.length) + str;
         }
 
+        function fit(str, width) {
+            str = String(str || '');
+            return str.length > width ? str.slice(0, width) : str.padEnd(width, ' ');
+        }
+
         // Called from Android (FloatingWindowService) every ~250ms with a single JSON object.
         function updateHudData(d) {
             document.getElementById('txt-device').innerText =
-                `${String(d.device).padEnd(18, ' ')}[${d.resolution}]`;
+                `${fit(d.device, 18)}[${d.resolution}]`;
 
             const apiTag = (d.api && d.api !== '—') ? d.api : 'no layer';
             document.getElementById('txt-display').innerText =
-                `${String(d.scale).padEnd(12, ' ')}${pad(apiTag, 9)}  ${d.hz}Hz`;
+                `${fit(d.scale, 10)} ${fit(apiTag, 8)} ${d.hz}Hz`;
 
             // Thermal label + colour.
             const thermalEl = document.getElementById('val-thermal');

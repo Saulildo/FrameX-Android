@@ -143,9 +143,15 @@ class FloatingWindowService : Service() {
                 javaScriptEnabled = true       // required to call updateHudData(...)
                 allowFileAccess = true         // load file:///android_asset/hud.html
                 domStorageEnabled = false
+                textZoom = 100
+                useWideViewPort = false
+                loadWithOverviewMode = false
+                builtInZoomControls = false
+                displayZoomControls = false
                 // No network is used; everything is local. Keep cache off.
                 cacheMode = WebSettings.LOAD_NO_CACHE
             }
+            setInitialScale(100)
             // The HUD is display-only: don't let the page try to take focus or show scrollbars.
             isFocusable = false
             isFocusableInTouchMode = false
@@ -179,8 +185,10 @@ class FloatingWindowService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             val prefs = getSharedPreferences("framex_settings", Context.MODE_PRIVATE)
-            x = prefs.getInt(KEY_HUD_X, 40)
-            y = prefs.getInt(KEY_HUD_Y, 120)
+            val maxX = (resources.displayMetrics.widthPixels - width).coerceAtLeast(0)
+            val maxY = (resources.displayMetrics.heightPixels - height).coerceAtLeast(0)
+            x = prefs.getInt(KEY_HUD_X, 40).coerceIn(0, maxX)
+            y = prefs.getInt(KEY_HUD_Y, 80).coerceIn(0, maxY)
         }
 
         attachDragHandler(wv)
@@ -407,8 +415,8 @@ class FloatingWindowService : Service() {
         private const val KEY_HUD_X = "hud_x"
         private const val KEY_HUD_Y = "hud_y"
         private const val KEY_OVERLAY_WAS_RUNNING = "overlay_was_running"
-        private const val HUD_WIDTH_DP = 360
-        private const val HUD_HEIGHT_DP = 330
+        private const val HUD_WIDTH_DP = 300
+        private const val HUD_HEIGHT_DP = 190
 
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
