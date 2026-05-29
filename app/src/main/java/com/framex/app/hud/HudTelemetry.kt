@@ -148,7 +148,22 @@ class HudTelemetryCollector(private val root: RootManager) {
         val lines = ArrayList<String>()
         if (includeSlow) {
             lines += "echo $MARKER_PREFIX$SEC_MODEL"
-            lines += "getprop ro.product.model"
+            lines += """
+                SOC_MODEL=${'$'}(getprop ro.soc.model)
+                SOC_MAKER=${'$'}(getprop ro.soc.manufacturer)
+                CHIP=${'$'}(getprop ro.vendor.mediatek.platform)
+                [ -z "${'$'}CHIP" ] && CHIP=${'$'}(getprop ro.board.platform)
+                CPUINFO=${'$'}(grep -m1 -E 'Hardware|Processor|model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | xargs)
+                if [ -n "${'$'}SOC_MODEL" ]; then
+                  if [ -n "${'$'}SOC_MAKER" ]; then echo "${'$'}SOC_MAKER ${'$'}SOC_MODEL"; else echo "${'$'}SOC_MODEL"; fi
+                elif [ -n "${'$'}CHIP" ]; then
+                  echo "${'$'}CHIP"
+                elif [ -n "${'$'}CPUINFO" ]; then
+                  echo "${'$'}CPUINFO"
+                else
+                  getprop ro.product.model
+                fi
+            """.trimIndent()
             lines += "echo $MARKER_PREFIX$SEC_SIZE"
             lines += "wm size"
             lines += "echo $MARKER_PREFIX$SEC_DISPLAY"
