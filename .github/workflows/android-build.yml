@@ -73,3 +73,33 @@ jobs:
           name: FrameX-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      - name: Package Zygisk module
+        shell: bash
+        run: |
+          set -euo pipefail
+          ModuleDir="$GITHUB_WORKSPACE/build/framex-zygisk-module"
+          rm -rf "$ModuleDir" "$GITHUB_WORKSPACE/FrameX-Zygisk.zip"
+          mkdir -p "$ModuleDir/zygisk"
+
+          cp magisk/framex_zygisk/module.prop "$ModuleDir/module.prop"
+          cp magisk/framex_zygisk/customize.sh "$ModuleDir/customize.sh"
+          cp magisk/framex_zygisk/post-fs-data.sh "$ModuleDir/post-fs-data.sh"
+
+          Arm64=$(find app/build/intermediates/cxx -path '*/obj/arm64-v8a/libframex_zygisk.so' | head -n 1)
+          Arm32=$(find app/build/intermediates/cxx -path '*/obj/armeabi-v7a/libframex_zygisk.so' | head -n 1)
+          test -n "$Arm64"
+          test -n "$Arm32"
+          cp "$Arm64" "$ModuleDir/zygisk/arm64-v8a.so"
+          cp "$Arm32" "$ModuleDir/zygisk/armeabi-v7a.so"
+
+          chmod 0644 "$ModuleDir/module.prop" "$ModuleDir/zygisk/"*.so
+          chmod 0755 "$ModuleDir/customize.sh" "$ModuleDir/post-fs-data.sh"
+          (cd "$ModuleDir" && zip -r "$GITHUB_WORKSPACE/FrameX-Zygisk.zip" .)
+
+      - name: Upload Zygisk module
+        uses: actions/upload-artifact@v4
+        with:
+          name: FrameX-Zygisk-module
+          path: FrameX-Zygisk.zip
+          if-no-files-found: error

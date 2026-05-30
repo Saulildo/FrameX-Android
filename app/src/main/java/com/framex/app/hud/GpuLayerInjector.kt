@@ -4,11 +4,13 @@ import android.util.Log
 import com.framex.app.core.root.RootManager
 
 /**
- * Enables/disables injection of the FrameX Vulkan & GLES instrumentation layers into a target
- * app, using Android's built-in GPU debug layer mechanism (the same one Android GPU Inspector
- * uses). Requires root to write the `global` settings reliably for an arbitrary package.
+ * Enables/disables FrameX graphics instrumentation for a target app.
  *
- * How it works:
+ * Preferred path:
+ *  - If the FrameX Zygisk Magisk module is installed, write the selected package to the module's
+ *    target file. The module then patches graphics present/swap imports inside that target app.
+ *
+ * Fallback path:
  *  - `gpu_debug_layer_app` points the loader at *our* APK, whose nativeLibraryDir contains
  *    `libVkLayer_framex_hud.so` and `libGLES_framex_hud.so`.
  *  - `gpu_debug_app` names the target whose process should load the layers.
@@ -33,18 +35,35 @@ class GpuLayerInjector(private val root: RootManager) {
      */
     suspend fun enable(targetPackage: String, forceRestart: Boolean = false): Boolean {
         if (!root.isRootAvailable.value) return false
+        if (!PACKAGE_RE.matches(targetPackage)) return false
+
         val script = buildString {
-            appendLine("settings put global enable_gpu_debug_layers 1")
-            appendLine("settings put global gpu_debug_app $targetPackage")
-            appendLine("settings put global gpu_debug_layer_app $OUR_PACKAGE")
-            appendLine("settings put global gpu_debug_layers $VK_LAYER_NAME")
-            appendLine("settings put global gpu_debug_layers_gles $GLES_LAYER_SO")
-            if (forceRestart) appendLine("am force-stop $targetPackage")
-            appendLine("echo FRAMEX_ENABLE=${'$'}(settings get global enable_gpu_debug_layers)")
-            appendLine("echo FRAMEX_APP=${'$'}(settings get global gpu_debug_app)")
-            appendLine("echo FRAMEX_LAYER_APP=${'$'}(settings get global gpu_debug_layer_app)")
-            appendLine("echo FRAMEX_VK=${'$'}(settings get global gpu_debug_layers)")
-            appendLine("echo FRAMEX_GLES=${'$'}(settings get global gpu_debug_layers_gles)")
+            appendLine("MOD=$ZYGISK_MODULE_DIR")
+            appendLine("if [ -d \"${'$'}MOD\" ] && [ ! -f \"${'$'}MOD/disable\" ]; then")
+            appendLine("  echo '$targetPackage' > \"${'$'}MOD/target.txt\"")
+            appendLine("  chmod 0644 \"${'$'}MOD/target.txt\" 2>/dev/null")
+            appendLine("  settings delete global gpu_debug_layers >/dev/null 2>&1")
+            appendLine("  settings delete global gpu_debug_layers_gles >/dev/null 2>&1")
+            appendLine("  settings delete global gpu_debug_app >/dev/null 2>&1")
+            appendLine("  settings delete global gpu_debug_layer_app >/dev/null 2>&1")
+            appendLine("  settings put global enable_gpu_debug_layers 0")
+            if (forceRestart) appendLine("  am force-stop $targetPackage")
+            appendLine("  echo FRAMEX_ZYGISK=1")
+            appendLine("  echo FRAMEX_TARGET=${'$'}(cat \"${'$'}MOD/target.txt\" 2>/dev/null)")
+            appendLine("else")
+            appendLine("  settings put global enable_gpu_debug_layers 1")
+            appendLine("  settings put global gpu_debug_app $targetPackage")
+            appendLine("  settings put global gpu_debug_layer_app $OUR_PACKAGE")
+            appendLine("  settings put global gpu_debug_layers $VK_LAYER_NAME")
+            appendLine("  settings put global gpu_debug_layers_gles $GLES_LAYER_SO")
+            if (forceRestart) appendLine("  am force-stop $targetPackage")
+            appendLine("  echo FRAMEX_ZYGISK=0")
+            appendLine("  echo FRAMEX_ENABLE=${'$'}(settings get global enable_gpu_debug_layers)")
+            appendLine("  echo FRAMEX_APP=${'$'}(settings get global gpu_debug_app)")
+            appendLine("  echo FRAMEX_LAYER_APP=${'$'}(settings get global gpu_debug_layer_app)")
+            appendLine("  echo FRAMEX_VK=${'$'}(settings get global gpu_debug_layers)")
+            appendLine("  echo FRAMEX_GLES=${'$'}(settings get global gpu_debug_layers_gles)")
+            appendLine("fi")
         }
         val out = root.executeCommand(script)
         val applied = out.lineSequence()
@@ -54,17 +73,21 @@ class GpuLayerInjector(private val root: RootManager) {
             }
             .toMap()
 
-        val ok = applied["FRAMEX_ENABLE"] == "1" &&
+        val zygiskOk = applied["FRAMEX_ZYGISK"] == "1" &&
+            applied["FRAMEX_TARGET"] == targetPackage
+        val gpuDebugOk = applied["FRAMEX_ENABLE"] == "1" &&
             applied["FRAMEX_APP"] == targetPackage &&
             applied["FRAMEX_LAYER_APP"] == OUR_PACKAGE &&
             applied["FRAMEX_VK"] == VK_LAYER_NAME &&
             applied["FRAMEX_GLES"] == GLES_LAYER_SO
+        val ok = zygiskOk || gpuDebugOk
 
         if (ok) {
             injectedPackage = targetPackage
-            Log.i(TAG, "GPU layer injection enabled for $targetPackage (restart=$forceRestart)")
+            val mode = if (zygiskOk) "Zygisk" else "GPU debug layer"
+            Log.i(TAG, "$mode injection enabled for $targetPackage (restart=$forceRestart)")
         } else {
-            Log.w(TAG, "GPU layer injection settings did not apply for $targetPackage: $out")
+            Log.w(TAG, "Injection settings did not apply for $targetPackage: $out")
         }
         return ok
     }
@@ -77,6 +100,8 @@ class GpuLayerInjector(private val root: RootManager) {
         }
         root.executeCommand(
             buildString {
+                appendLine("MOD=$ZYGISK_MODULE_DIR")
+                appendLine("[ -d \"${'$'}MOD\" ] && : > \"${'$'}MOD/target.txt\"")
                 appendLine("settings delete global gpu_debug_layers")
                 appendLine("settings delete global gpu_debug_layers_gles")
                 appendLine("settings delete global gpu_debug_app")
@@ -104,5 +129,7 @@ class GpuLayerInjector(private val root: RootManager) {
         const val OUR_PACKAGE = "com.framex.app"
         const val VK_LAYER_NAME = "VK_LAYER_framex_hud"
         const val GLES_LAYER_SO = "libGLES_framex_hud.so"
+        const val ZYGISK_MODULE_DIR = "/data/adb/modules/framex_zygisk"
+        val PACKAGE_RE = Regex("[A-Za-z0-9_.]+")
     }
 }

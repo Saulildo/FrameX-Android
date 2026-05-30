@@ -27,3 +27,15 @@ add_library(GLES_framex_hud SHARED
         framex_ipc.cpp)
 target_compile_options(GLES_framex_hud PRIVATE -fvisibility=hidden -Wall -Wextra)
 target_link_libraries(GLES_framex_hud log EGL GLESv2)
+
+# ---------------------------------------------------------------------------
+# Zygisk module -> packaged as zygisk/<abi>.so in the Magisk module zip.
+#
+# This does not rely on Android's GPU-debug-layer loader. It runs inside the target app process
+# through Zygisk, patches graphics present/swap imports, and streams samples to the HUD IPC socket.
+# ---------------------------------------------------------------------------
+add_library(framex_zygisk SHARED
+        framex_zygisk.cpp
+        framex_ipc.cpp)
+target_compile_options(framex_zygisk PRIVATE -fvisibility=hidden -Wall -Wextra)
+target_link_libraries(framex_zygisk log EGL GLESv2 dl)

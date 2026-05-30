@@ -144,7 +144,7 @@ class OverlayCustomizationViewModel @Inject constructor(
 
             val ok = GpuLayerInjector(rootManager).enable(packageName, forceRestart = true)
             _injectionStatus.value = if (ok) {
-                "Layer target set for $label. Launch it again now."
+                "Zygisk target set for $label. Launch it after reboot."
             } else {
                 "Injection failed"
             }
@@ -255,7 +255,7 @@ fun OverlayCustomizationScreen(
                 }
 
                 item {
-                    ConfigLabel("GPU Layer Injection")
+                    ConfigLabel("Zygisk Injection")
                     InjectionMenu(
                         apps = apps,
                         selectedPackage = targetPackage,

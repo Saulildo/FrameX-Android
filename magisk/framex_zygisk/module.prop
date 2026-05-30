@@ -1,0 +1,6 @@
+id=framex_zygisk
+name=FrameX Zygisk Injector
+version=1.0
+versionCode=1
+author=FrameX
+description=Zygisk graphics telemetry injector for FrameX HUD. Reboot after install and keep Zygisk enabled.
